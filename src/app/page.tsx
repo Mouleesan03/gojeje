@@ -1,6 +1,6 @@
 "use client";
 
-import { FormEvent, MouseEvent, useEffect, useMemo, useState } from "react";
+import { FormEvent, MouseEvent, useEffect, useMemo, useRef, useState } from "react";
 
 type Story = {
   id: string;
@@ -8,7 +8,7 @@ type Story = {
   summary: string;
   source: string;
   category: string;
-  language: "Tamil" | "English";
+  language: "Tamil" | "English" | "Sinhala";
   publishedAt: string;
   url: string;
   image: string;
@@ -22,7 +22,16 @@ const navItems = [
   { id: "Stories", label: "Stories", icon: "/icons/stories.svg" },
   { id: "AI", label: "AI", icon: "/icons/ai.svg" }
 ];
-const quickSearches = ["Important", "Sri Lanka", "World", "BBC Tamil", "TamilWin", "Lankasri", "News First"];
+const quickSearches = [
+  { id: "Latest", label: "Latest" },
+  { id: "Must Know", label: "Must Know" },
+  { id: "Sri Lanka", label: "Lanka" },
+  { id: "World", label: "World" },
+  { id: "BBC Tamil", label: "BBC Tamil" },
+  { id: "TamilWin", label: "TamilWin" },
+  { id: "Lankasri", label: "Lankasri" },
+  { id: "News First", label: "News First" }
+];
 
 const toneClass: Record<string, string> = {
   fuel: "tone-fuel",
@@ -32,16 +41,26 @@ const toneClass: Record<string, string> = {
   city: "tone-city"
 };
 
-const importantWindow = 30 * 60 * 1000;
+const importantWindow = 60 * 60 * 1000;
 const oneHourWindow = 60 * 60 * 1000;
 const feedWindow = 8 * oneHourWindow;
-const categoryWindow = 10 * oneHourWindow;
-const storyWindow = 5 * oneHourWindow;
+const categoryWindow = 8 * oneHourWindow;
+const storyWindow = oneHourWindow;
 
-const defaultQuestions: Record<"All" | "Tamil" | "English", string> = {
-  All: "Give me the most important news updates from the last 2 hours.",
-  Tamil: "கடந்த 2 மணி நேரத்தில் முக்கியமான தமிழ் செய்திகள் என்ன?",
-  English: "Give me the important English news updates from the last 2 hours."
+type LanguageFilter = "All" | "Tamil" | "English" | "Sinhala";
+
+const languageLabels: Record<LanguageFilter, string> = {
+  All: "All",
+  Tamil: "TA",
+  Sinhala: "SI",
+  English: "EN"
+};
+
+const defaultQuestions: Record<LanguageFilter, string> = {
+  All: "Give me the most important news updates from the last 8 hours.",
+  Tamil: "கடந்த 8 மணி நேரத்தில் முக்கியமான தமிழ் செய்திகள் என்ன?",
+  English: "Give me the important English news updates from the last 8 hours.",
+  Sinhala: "Give me the important Sinhala Sri Lankan news updates from the last 8 hours."
 };
 
 function relativeTime(value: string) {
@@ -133,6 +152,23 @@ function diversifyStories(items: Story[], limit: number) {
   }
 
   return chosen;
+}
+
+function relatedScore(base: Story, candidate: Story) {
+  const normalize = (value: string) =>
+    value
+      .toLowerCase()
+      .replace(/[^\p{L}\p{N}\s]+/gu, " ")
+      .split(/\s+/)
+      .filter((word) => word.length > 3);
+  const baseWords = new Set(normalize(`${base.title} ${base.summary}`));
+  const candidateWords = new Set(normalize(`${candidate.title} ${candidate.summary}`));
+  const overlap = [...baseWords].filter((word) => candidateWords.has(word)).length;
+  const wordScore = baseWords.size ? overlap / Math.max(1, Math.min(baseWords.size, candidateWords.size)) : 0;
+  const sourceScore = base.source === candidate.source ? 0.25 : 0;
+  const categoryScore = base.category === candidate.category ? 0.2 : 0;
+  const languageScore = base.language === candidate.language ? 0.1 : 0;
+  return Math.min(1, wordScore * 0.65 + sourceScore + categoryScore + languageScore);
 }
 
 function cleanAiLine(line: string) {
@@ -247,7 +283,7 @@ export default function Home() {
   const [stories, setStories] = useState<Story[]>([]);
   const [popularStories, setPopularStories] = useState<Story[]>([]);
   const [activeNav, setActiveNav] = useState("Top");
-  const [languageFilter, setLanguageFilter] = useState<"All" | "Tamil" | "English">("All");
+  const [languageFilter, setLanguageFilter] = useState<LanguageFilter>("All");
   const [query, setQuery] = useState("");
   const [selectedStory, setSelectedStory] = useState<Story | null>(null);
   const [storyIndex, setStoryIndex] = useState<number | null>(null);
@@ -256,14 +292,17 @@ export default function Home() {
   const [answer, setAnswer] = useState("");
   const [searchOpen, setSearchOpen] = useState(false);
   const [latestPage, setLatestPage] = useState(0);
-  const [recentTopic, setRecentTopic] = useState("Important");
+  const [recentTopic, setRecentTopic] = useState("Latest");
   const [selectedAiAnswer, setSelectedAiAnswer] = useState("");
   const [selectedAiLoading, setSelectedAiLoading] = useState(false);
   const [summaryListening, setSummaryListening] = useState(false);
+  const [summaryAudioLoading, setSummaryAudioLoading] = useState(false);
   const [loading, setLoading] = useState(true);
   const [bootLoading, setBootLoading] = useState(true);
   const [asking, setAsking] = useState(false);
   const [live, setLive] = useState(false);
+  const summaryAudioRef = useRef<HTMLAudioElement | null>(null);
+  const summaryAudioUrlsRef = useRef<Map<string, string>>(new Map());
 
   useEffect(() => {
     async function loadNews() {
@@ -293,16 +332,16 @@ export default function Home() {
   }, [activeNav, languageFilter, query, recentTopic]);
 
   useEffect(() => {
-    if (typeof window === "undefined" || !("speechSynthesis" in window)) return;
-    window.speechSynthesis.cancel();
+    stopSummaryAudio();
     setSummaryListening(false);
+    setSummaryAudioLoading(false);
   }, [selectedAiAnswer, selectedStory?.id]);
 
   useEffect(() => {
     return () => {
-      if (typeof window !== "undefined" && "speechSynthesis" in window) {
-        window.speechSynthesis.cancel();
-      }
+      stopSummaryAudio();
+      summaryAudioUrlsRef.current.forEach((url) => URL.revokeObjectURL(url));
+      summaryAudioUrlsRef.current.clear();
     };
   }, []);
 
@@ -320,7 +359,7 @@ export default function Home() {
   const tamilStories = useMemo(() => storyWindowStories.filter((story) => story.language === "Tamil"), [storyWindowStories]);
   const webStories = useMemo(() => {
     const popularSources = ["BBC Tamil", "TamilWin", "Lankasri", "BBC News", "Al Jazeera", "News First"];
-    const popular = storyWindowStories.filter((story) => popularSources.includes(story.source) || story.tone === "alert");
+    const popular = storyWindowStories.filter((story) => popularSources.includes(story.source) || story.tone === "alert" || isTopWindowStory(story) || isSriLankaStory(story));
     return (popular.length ? popular : tamilStories.length ? tamilStories : storyWindowStories).slice(0, 100);
   }, [storyWindowStories, tamilStories]);
 
@@ -359,7 +398,8 @@ export default function Home() {
   const isCategoryFeed = activeNav === "Sri Lanka" || activeNav === "World";
   const topicFilteredStories = useMemo(() => {
     if (isCategoryFeed) return filteredStories;
-    if (recentTopic === "Important") return filteredStories.filter((story) => story.tone === "alert" || isTopWindowStory(story) || isSriLankaStory(story)).slice(0, 100);
+    if (recentTopic === "Latest") return filteredStories;
+    if (recentTopic === "Must Know") return filteredStories.filter((story) => story.tone === "alert" || isTopWindowStory(story) || isSriLankaStory(story)).slice(0, 100);
     if (recentTopic === "Sri Lanka") return filteredStories.filter(isSriLankaStory);
     if (recentTopic === "World") return filteredStories.filter(isWorldStory);
     return filteredStories.filter((story) => [story.source, story.category, story.title, story.summary].join(" ").toLowerCase().includes(recentTopic.toLowerCase()));
@@ -399,12 +439,11 @@ export default function Home() {
   }, [languageScopedStories]);
   const relatedStories = useMemo(() => {
     if (!selectedStory) return [];
-    const candidates = languageScopedStories.filter((story) => story.id !== selectedStory.id);
-    const ranked = [
-      ...candidates.filter((story) => story.source === selectedStory.source),
-      ...candidates.filter((story) => story.source !== selectedStory.source && story.category === selectedStory.category)
-    ];
-    return ranked.filter((story, index, list) => list.findIndex((item) => item.id === story.id) === index).slice(0, 2);
+    const best = languageScopedStories
+      .filter((story) => story.id !== selectedStory.id)
+      .map((story) => ({ story, score: relatedScore(selectedStory, story) }))
+      .sort((a, b) => b.score - a.score)[0];
+    return best && best.score >= 0.8 ? [best.story] : [];
   }, [languageScopedStories, selectedStory]);
 
   async function askPrompt(prompt: string, story?: Story) {
@@ -454,24 +493,67 @@ export default function Home() {
     setSelectedAiLoading(false);
   }
 
-  function toggleSummaryListen() {
-    if (!selectedAiAnswer.trim() || typeof window === "undefined" || !("speechSynthesis" in window)) return;
+  function stopSummaryAudio() {
+    const audio = summaryAudioRef.current;
+    if (!audio) return;
+    audio.pause();
+    audio.currentTime = 0;
+    summaryAudioRef.current = null;
+  }
+
+  function selectedSummaryAudioKey() {
+    return `${selectedStory?.id ?? "summary"}:${selectedAiAnswer}`;
+  }
+
+  async function getSummaryAudioUrl() {
+    const cacheKey = selectedSummaryAudioKey();
+    const cachedUrl = summaryAudioUrlsRef.current.get(cacheKey);
+    if (cachedUrl) return cachedUrl;
+
+    const response = await fetch("/api/tts", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ text: selectedAiAnswer })
+    });
+
+    if (!response.ok) throw new Error("Tamil audio is unavailable right now.");
+
+    const blob = await response.blob();
+    const audioUrl = URL.createObjectURL(blob);
+    summaryAudioUrlsRef.current.set(cacheKey, audioUrl);
+    return audioUrl;
+  }
+
+  async function toggleSummaryListen() {
+    if (!selectedAiAnswer.trim() || summaryAudioLoading) return;
 
     if (summaryListening) {
-      window.speechSynthesis.cancel();
+      stopSummaryAudio();
       setSummaryListening(false);
       return;
     }
 
-    window.speechSynthesis.cancel();
-    const utterance = new SpeechSynthesisUtterance(selectedAiAnswer);
-    utterance.lang = selectedStory?.language === "Tamil" ? "ta-LK" : "en-US";
-    utterance.rate = selectedStory?.language === "Tamil" ? 0.78 : 0.84;
-    utterance.pitch = 1;
-    utterance.onend = () => setSummaryListening(false);
-    utterance.onerror = () => setSummaryListening(false);
-    setSummaryListening(true);
-    window.speechSynthesis.speak(utterance);
+    setSummaryAudioLoading(true);
+    try {
+      const audioUrl = await getSummaryAudioUrl();
+      stopSummaryAudio();
+      const audio = new Audio(audioUrl);
+      summaryAudioRef.current = audio;
+      audio.onended = () => {
+        summaryAudioRef.current = null;
+        setSummaryListening(false);
+      };
+      audio.onerror = () => {
+        summaryAudioRef.current = null;
+        setSummaryListening(false);
+      };
+      await audio.play();
+      setSummaryListening(true);
+    } catch {
+      setSummaryListening(false);
+    } finally {
+      setSummaryAudioLoading(false);
+    }
   }
 
   function openStory(index: number) {
@@ -565,11 +647,11 @@ export default function Home() {
     context.restore();
 
     context.fillStyle = "#141414";
-    context.font = "700 46px Inter, Noto Sans Tamil, Arial, sans-serif";
+    context.font = "700 46px Inter, Noto Sans Tamil, Noto Sans Sinhala, Arial, sans-serif";
     const nextY = wrapCanvasText(context, story.title, 92, 790, 860, 60, 4);
 
     context.fillStyle = "#606060";
-    context.font = "400 32px Inter, Noto Sans Tamil, Arial, sans-serif";
+    context.font = "400 32px Inter, Noto Sans Tamil, Noto Sans Sinhala, Arial, sans-serif";
     wrapCanvasText(context, shortText(story.summary, 170), 92, Math.min(nextY + 36, 1088), 860, 44, 3);
 
     context.fillStyle = "#bb1919";
@@ -619,7 +701,8 @@ export default function Home() {
   }
 
   const activeStory = storyIndex === null ? null : webStories[storyIndex];
-  const visibleAnswerLines = answer.split(/\n+/).map(cleanAiLine).filter(Boolean).slice(0, 7);
+  const answerLeadStory = selectedStory ?? importantStories[0] ?? languageScopedStories[0] ?? null;
+  const visibleAnswerLines = answer.split(/\n+/).map(cleanAiLine).filter(Boolean).slice(0, 3);
 
   const aiPanel = (
     <aside className="ai-panel ai-panel-main">
@@ -653,7 +736,15 @@ export default function Home() {
         </section>
       ) : answer ? (
         <section className="ai-answer-card readable-ai-answer">
-          <span>AI response</span>
+          <div className="ai-answer-head">
+            <span>AI response</span>
+            {answerLeadStory && (
+              <div className="ai-answer-meta" aria-label="Answer context">
+                <b>{answerLeadStory.source}</b>
+                <em>{relativeTime(answerLeadStory.publishedAt)} ago</em>
+              </div>
+            )}
+          </div>
           {visibleAnswerLines.map((line, index) => (
             <p key={`${line}-${index}`}>{line}</p>
           ))}
@@ -661,7 +752,7 @@ export default function Home() {
       ) : (
         <section className="ai-empty-card">
           <span>Recent intelligence</span>
-          <p>{languageScopedStories.length ? `${languageScopedStories.length} updates from the last 2 hours.` : "Waiting for recent updates."}</p>
+          <p>{languageScopedStories.length ? `${languageScopedStories.length} updates from the last 8 hours.` : "Waiting for recent updates."}</p>
         </section>
       )}
 
@@ -720,7 +811,7 @@ export default function Home() {
               setSearchOpen(Boolean(event.target.value.trim()));
             }}
             onFocus={() => setSearchOpen(Boolean(query.trim()))}
-            placeholder="Ask AI or search news"
+            placeholder="Search news"
           />
         </form>
         <label className="language-dropdown" data-language={languageFilter} title={`Language: ${languageFilter}`}>
@@ -732,13 +823,15 @@ export default function Home() {
               <path d="M12 3a13.6 13.6 0 0 0 0 18" />
             </svg>
           </span>
+          <span className="language-code">{languageLabels[languageFilter]}</span>
           <select
             value={languageFilter}
-            onChange={(event) => setLanguageFilter(event.target.value as "All" | "Tamil" | "English")}
+            onChange={(event) => setLanguageFilter(event.target.value as LanguageFilter)}
             aria-label="Language filter"
           >
             <option value="All">All languages</option>
             <option value="Tamil">Tamil only</option>
+            <option value="Sinhala">Sinhala only</option>
             <option value="English">English only</option>
           </select>
         </label>
@@ -843,6 +936,7 @@ export default function Home() {
                         <div className="lead-body">
                           <div className="meta-row">
                             <span className="source-chip">{story.source}</span>
+                            <span className="badge">{story.category}</span>
                             <span className="language-chip">{story.language}</span>
                             <span className="time-chip">{relativeTime(story.publishedAt)} ago</span>
                           </div>
@@ -879,7 +973,7 @@ export default function Home() {
               {!isCategoryFeed && (
                 <div className="quick-chips">
                   {quickSearches.map((chip) => (
-                    <button type="button" key={chip} className={recentTopic === chip ? "active" : ""} onClick={() => setRecentTopic(chip)}>{chip}</button>
+                    <button type="button" key={chip.id} className={recentTopic === chip.id ? "active" : ""} onClick={() => setRecentTopic(chip.id)}>{chip.label}</button>
                   ))}
                 </div>
               )}
@@ -895,6 +989,7 @@ export default function Home() {
                     <h3>{story.title}</h3>
                     <div className="meta-row">
                       <span className="source-chip">{story.source}</span>
+                      <span className="badge">{story.category}</span>
                       <span className="time-chip">{relativeTime(story.publishedAt)} ago</span>
                     </div>
                   </div>
@@ -962,13 +1057,13 @@ export default function Home() {
                 <div className="inline-ai-summary-head">
                   <span>GOjeje AI summary</span>
                   {!selectedAiLoading && selectedAiAnswer ? (
-                    <button type="button" className="listen-summary" onClick={toggleSummaryListen} aria-pressed={summaryListening}>
+                    <button type="button" className="listen-summary" onClick={toggleSummaryListen} aria-pressed={summaryListening} disabled={summaryAudioLoading}>
                       <svg viewBox="0 0 24 24" aria-hidden="true">
                         <path d="M4 9v6h4l5 4V5L8 9H4Z" />
                         <path d="M16 8.5a5 5 0 0 1 0 7" />
                         <path d="M18.5 6a8 8 0 0 1 0 12" />
                       </svg>
-                      {summaryListening ? "Stop" : "Listen"}
+                      {summaryListening ? "Stop" : summaryAudioLoading ? "Loading..." : "Listen"}
                     </button>
                   ) : null}
                 </div>

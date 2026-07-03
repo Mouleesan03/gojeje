@@ -1,4 +1,4 @@
-@import url("https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=Noto+Sans+Tamil:wght@400;500;600&display=swap");
+@import url("https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=Noto+Sans+Sinhala:wght@400;500;600&family=Noto+Sans+Tamil:wght@400;500;600&display=swap");
 
 :root {
   --bg: #f5f5f5;
@@ -29,7 +29,7 @@ body {
   overflow-x: hidden;
   background: var(--bg);
   color: var(--ink);
-  font-family: "Inter", "Noto Sans Tamil", system-ui, sans-serif;
+  font-family: "Inter", "Noto Sans Tamil", "Noto Sans Sinhala", system-ui, sans-serif;
   letter-spacing: 0;
 }
 
@@ -104,7 +104,7 @@ button {
   top: 12px;
   z-index: 20;
   display: grid;
-  grid-template-columns: 126px minmax(220px, 1fr) 46px;
+  grid-template-columns: 126px minmax(220px, 1fr) 72px;
   gap: 10px;
   align-items: center;
   padding: 8px 0;
@@ -119,14 +119,18 @@ button {
 .language-dropdown {
   position: relative;
   display: inline-grid;
+  grid-template-columns: 22px auto;
   place-items: center;
+  column-gap: 5px;
   justify-self: end;
-  width: 44px;
+  min-width: 66px;
+  width: auto;
   height: 44px;
   border: 1px solid var(--line);
   border-radius: 12px;
   background: #fff;
   color: var(--ink);
+  padding: 0 10px 0 9px;
   box-shadow: 0 6px 18px rgba(24, 32, 44, 0.06);
 }
 
@@ -140,6 +144,12 @@ button {
   border-color: #ccd8f1;
   background: #f5f8ff;
   color: #355c9d;
+}
+
+.language-dropdown[data-language="Sinhala"] {
+  border-color: #ead0a8;
+  background: #fff8ed;
+  color: #9a5b00;
 }
 
 .language-dropdown[data-language="All"] {
@@ -166,15 +176,15 @@ button {
 }
 
 .language-dropdown::after {
-  content: "";
-  position: absolute;
-  right: 7px;
-  bottom: 7px;
-  width: 5px;
-  height: 5px;
-  border-radius: 50%;
-  background: currentColor;
-  border: 0;
+  content: none;
+}
+
+.language-code {
+  color: currentColor;
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: 0;
+  line-height: 1;
 }
 
 .language-dropdown::before {
@@ -931,6 +941,40 @@ h3 {
   text-transform: uppercase;
 }
 
+.ai-answer-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 10px;
+  margin-bottom: 10px;
+}
+
+.ai-answer-head > span {
+  margin-bottom: 0;
+}
+
+.ai-answer-meta {
+  display: flex;
+  justify-content: flex-end;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.ai-answer-meta b,
+.ai-answer-meta em {
+  display: inline-flex;
+  align-items: center;
+  min-height: 22px;
+  border-radius: 999px;
+  background: #fff;
+  color: #4c4c4c;
+  padding: 3px 8px;
+  font-size: 11px;
+  font-style: normal;
+  font-weight: 700;
+  text-transform: none;
+}
+
 .ai-empty-card span {
   color: #555;
 }
@@ -945,6 +989,7 @@ h3 {
 .readable-ai-answer p {
   border-bottom: 1px solid #eee;
   padding-bottom: 8px;
+  font-size: 13px;
 }
 
 .readable-ai-answer p:last-child {
@@ -1728,6 +1773,11 @@ h3 {
   border-color: var(--accent);
 }
 
+.listen-summary:disabled {
+  cursor: wait;
+  opacity: 0.72;
+}
+
 .listen-summary svg {
   width: 18px;
   height: 18px;
@@ -1941,7 +1991,7 @@ h3 {
 
 @media (max-width: 980px) {
   .site-header {
-    grid-template-columns: 118px minmax(0, 1fr) 44px;
+    grid-template-columns: 118px minmax(0, 1fr) 66px;
   }
 
   .hero-grid,
@@ -1968,7 +2018,7 @@ h3 {
 
   .site-header {
     top: 0;
-    grid-template-columns: 94px minmax(0, 1fr) 40px;
+    grid-template-columns: 94px minmax(0, 1fr) 58px;
     gap: 8px;
     padding-top: 8px;
     border-radius: 0;
@@ -1990,15 +2040,22 @@ h3 {
   }
 
   .language-dropdown {
-    width: 40px;
+    min-width: 56px;
+    width: auto;
     height: 38px;
     border-radius: 10px;
+    column-gap: 3px;
+    padding: 0 7px;
   }
 
   .language-icon,
   .language-icon svg {
     width: 20px;
     height: 20px;
+  }
+
+  .language-code {
+    font-size: 10px;
   }
 
   .header-search input {

@@ -3,7 +3,7 @@ import { NextResponse } from "next/server";
 type Source = {
   name: string;
   category: string;
-  language: "Tamil" | "English";
+  language: "Tamil" | "English" | "Sinhala";
   url: string;
   kind: "rss" | "page";
   host?: string;
@@ -15,7 +15,7 @@ type Story = {
   summary: string;
   source: string;
   category: string;
-  language: "Tamil" | "English";
+  language: "Tamil" | "English" | "Sinhala";
   publishedAt: string;
   url: string;
   image: string;
@@ -24,9 +24,14 @@ type Story = {
 
 const sources: Source[] = [
   { name: "TamilWin", category: "Sri Lanka", language: "Tamil", kind: "page", url: "https://tamilwin.com/latest", host: "https://tamilwin.com" },
-  { name: "Lankasri", category: "Sri Lanka", language: "Tamil", kind: "page", url: "https://lankasri.com/srilanka", host: "https://news.lankasri.com" },
+  { name: "Lankasri", category: "Sri Lanka", language: "Tamil", kind: "page", url: "https://news.lankasri.com/srilanka", host: "https://news.lankasri.com" },
+  { name: "TamilMirror", category: "Sri Lanka", language: "Tamil", kind: "page", url: "https://www.tamilmirror.lk", host: "https://www.tamilmirror.lk" },
+  { name: "News 1st Tamil", category: "Sri Lanka", language: "Tamil", kind: "page", url: "https://www.newsfirst.lk/tamil", host: "https://www.newsfirst.lk" },
   { name: "BBC News", category: "World", language: "English", kind: "rss", url: "https://feeds.bbci.co.uk/news/rss.xml" },
   { name: "BBC Tamil", category: "Tamil", language: "Tamil", kind: "rss", url: "https://feeds.bbci.co.uk/tamil/rss.xml" },
+  { name: "Google News Sri Lanka", category: "Sri Lanka", language: "English", kind: "rss", url: "https://news.google.com/rss/search?q=Sri+Lanka+news+when:8h&hl=en-US&gl=US&ceid=US:en" },
+  { name: "Google News Sinhala", category: "Sri Lanka", language: "Sinhala", kind: "rss", url: "https://news.google.com/rss/search?q=Sri+Lanka+Sinhala+news+when:8h&hl=en-US&gl=US&ceid=US:en" },
+  { name: "Dinamani", category: "Tamil World", language: "Tamil", kind: "page", url: "https://www.dinamani.com/rss", host: "https://www.dinamani.com" },
   { name: "Al Jazeera", category: "World", language: "English", kind: "rss", url: "https://www.aljazeera.com/xml/rss/all.xml" },
   { name: "CNN", category: "World", language: "English", kind: "rss", url: "http://rss.cnn.com/rss/edition.rss" },
   { name: "AP News", category: "World", language: "English", kind: "rss", url: "https://apnews.com/hub/ap-top-news?output=rss" },
@@ -36,13 +41,15 @@ const sources: Source[] = [
   { name: "News First", category: "Sri Lanka", language: "English", kind: "rss", url: "https://www.newsfirst.lk/feed/" },
   { name: "Tamil Guardian", category: "Politics", language: "English", kind: "rss", url: "https://www.tamilguardian.com/rss.xml" },
   { name: "Ada Derana", category: "General", language: "English", kind: "rss", url: "https://www.adaderana.lk/rss.php" },
+  { name: "Ada Derana Sinhala", category: "Sri Lanka", language: "Sinhala", kind: "rss", url: "https://sinhala.adaderana.lk/rsshotnews.php" },
+  { name: "News 1st Sinhala", category: "Sri Lanka", language: "Sinhala", kind: "page", url: "https://sinhala.newsfirst.lk", host: "https://sinhala.newsfirst.lk" },
   { name: "NewsWire", category: "General", language: "English", kind: "rss", url: "https://www.newswire.lk/feed/" },
   { name: "EconomyNext", category: "Business", language: "English", kind: "rss", url: "https://economynext.com/feed/" },
   { name: "Daily Mirror", category: "General", language: "English", kind: "rss", url: "https://www.dailymirror.lk/rss/top-story" }
 ];
 
-const twoHours = 2 * 60 * 60 * 1000;
-const tenHours = 10 * 60 * 60 * 1000;
+const feedWindow = 8 * 60 * 60 * 1000;
+const popularWindow = 60 * 60 * 1000;
 const oneHour = 60 * 60 * 1000;
 
 function clean(value: string) {
@@ -74,6 +81,21 @@ function textBetween(input: string, tag: string) {
   return clean(match?.[1] ?? "");
 }
 
+function cleanTitle(value: string) {
+  return clean(value)
+    .replace(/^\d{1,2}[-/]\d{1,2}[-/]\d{4}\s*(?:\|\s*)?(?:\d{1,2}:\d{2}\s*(?:AM|PM)?\s*)?/i, "")
+    .replace(/^\d{1,2}\s+(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Sept|Oct|Nov|Dec)[a-z]*\s+\d{4}\s*(?:\|\s*)?(?:\d{1,2}:\d{2}\s*(?:AM|PM)?\s*)?/i, "")
+    .replace(/^\d{1,2}:\d{2}\s*(?:AM|PM)?\s*/i, "")
+    .replace(/^\d{1,2}-\d{1,2}-\d{4}\s*\|\s*\d{1,2}:\d{2}\s*(?:AM|PM)?\s*/i, "")
+    .replace(/^\|\s*/, "")
+    .replace(/\b\d{1,2}\s+(?:minute|minutes|min|hour|hours|hr)s?\s+ago\b.*$/i, "")
+    .replace(/\b\d{1,2}\s+(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Sept|Oct|Nov|Dec)[a-z]*\s+\d{4}\b.*$/i, "")
+    .replace(/\b\d{1,2}[-/]\d{1,2}[-/]\d{4}\b.*$/i, "")
+    .replace(/\s+-\s+Google News$/i, "")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
 function imageFrom(item: string) {
   const thumbnail = item.match(/<media:thumbnail[^>]+url=["']([^"']+)["']/i)?.[1];
   const media = item.match(/<media:content[^>]+url=["']([^"']+)["']/i)?.[1];
@@ -87,8 +109,9 @@ function imageFrom(item: string) {
 function parseRss(xml: string, source: Source): Story[] {
   const items = xml.match(/<item[\s\S]*?<\/item>/gi) ?? [];
   return items.slice(0, 24).map((item, index) => {
-    const title = textBetween(item, "title");
+    const title = cleanTitle(textBetween(item, "title"));
     const summary = textBetween(item, "description");
+    const rawPublishedAt = textBetween(item, "pubDate");
     return {
       id: stableId(source.name, index, title),
       title,
@@ -96,12 +119,22 @@ function parseRss(xml: string, source: Source): Story[] {
       source: source.name,
       category: source.category,
       language: source.language,
-      publishedAt: textBetween(item, "pubDate"),
+      publishedAt: normalizeRssPublishedAt(rawPublishedAt, source),
       url: textBetween(item, "link"),
       image: imageFrom(item),
       tone: pickTone(`${title} ${summary}`)
     };
   });
+}
+
+function normalizeRssPublishedAt(value: string, source: Source) {
+  if (source.name === "Ada Derana Sinhala") {
+    const localSriLankaTime = value.replace(/\s\+0000$/i, " +0530");
+    const parsed = new Date(localSriLankaTime);
+    if (!Number.isNaN(parsed.getTime())) return parsed.toISOString();
+  }
+
+  return value;
 }
 
 async function fetchText(url: string, timeoutMs: number) {
@@ -130,20 +163,19 @@ function parseSectionPage(html: string, source: Source): Story[] {
 
   for (const [full, href, body] of matches) {
     const url = absoluteUrl(href, source);
-    if (!url || seen.has(url) || !/\/article\//.test(url)) continue;
-    if (source.name === "TamilWin" && !url.includes("tamilwin.com")) continue;
-    if (source.name === "Lankasri" && !url.includes("lankasri.com")) continue;
+    if (!url || seen.has(url) || !isArticleUrl(url, source)) continue;
 
-    const title = clean(body).replace(/^NEW\s+/i, "");
+    const title = cleanTitle(body).replace(/^NEW\s+/i, "");
     const image = imageFrom(full);
     const imageAlt = clean(full.match(/alt=["']([^"']+)["']/i)?.[1] ?? "");
-    const usableTitle = title.length > 18 ? title : imageAlt;
+    const usableTitle = title.length > 18 ? title : cleanTitle(imageAlt);
     if (!usableTitle || usableTitle.length < 18) continue;
 
     const around = html.slice(Math.max(0, html.indexOf(full) - 700), html.indexOf(full) + full.length + 900);
     const timeText = timeTextFromSnippet(around);
     const summary = clean(around.match(/<p[^>]*>([\s\S]*?)<\/p>/i)?.[1] ?? "");
-    const publishedAt = dateFromTamilTime(timeText) || dateFromArticleUrl(url);
+    const publishedAt = dateFromTimeText(timeText) || dateFromDatedText(`${body} ${around}`) || dateFromArticleUrl(url);
+    if (!publishedAt) continue;
 
     seen.add(url);
     stories.push({
@@ -172,8 +204,7 @@ function articleLinksFromSection(html: string, source: Source) {
 
   for (const [, href] of matches) {
     const url = absoluteUrl(href, source).split("#")[0];
-    if (!url || seen.has(url) || !/\/article\//.test(url)) continue;
-    if (source.name === "TamilWin" && !url.includes("tamilwin.com")) continue;
+    if (!url || seen.has(url) || !isArticleUrl(url, source)) continue;
     seen.add(url);
     links.push(url);
     if (links.length >= 8) break;
@@ -184,10 +215,11 @@ function articleLinksFromSection(html: string, source: Source) {
 
 async function fetchTamilWinArticle(url: string, source: Source, index: number): Promise<Story | null> {
   const html = await fetchText(url, 2500);
-  const title =
+  const title = cleanTitle(
     metaContent(html, "property", "og:title") ||
     metaContent(html, "name", "twitter:title") ||
-    clean(html.match(/<h1[^>]*>([\s\S]*?)<\/h1>/i)?.[1] ?? "");
+    clean(html.match(/<h1[^>]*>([\s\S]*?)<\/h1>/i)?.[1] ?? "")
+  );
   if (!title || title.length < 18) return null;
 
   const summary =
@@ -233,9 +265,24 @@ async function fetchTamilWinLatest(source: Source) {
 }
 
 function absoluteUrl(href: string, source: Source) {
+  if (href.startsWith("http://")) return href.replace(/^http:\/\//, "https://");
   if (href.startsWith("https://")) return href;
   if (href.startsWith("/")) return `${source.host ?? new URL(source.url).origin}${href}`;
   return "";
+}
+
+function isArticleUrl(url: string, source: Source) {
+  const hostname = new URL(url).hostname.replace(/^www\./, "");
+  const sourceHost = new URL(source.host ?? source.url).hostname.replace(/^www\./, "");
+  if (!hostname.endsWith(sourceHost)) return false;
+
+  if (source.name === "TamilWin" || source.name === "Lankasri") return /\/article\//.test(url);
+  if (source.name === "TamilMirror") return /\/\d+-\d+(?:[/?#]|$)/.test(url);
+  if (source.name === "Virakesari") return /\/article\//.test(url);
+  if (source.name === "Ada Derana Sinhala") return /\/news\.php\?nid=\d+/.test(url);
+  if (source.name.includes("News 1st")) return /\/(?:tamil|sinhala)\/\d{4}\//.test(url) || /\/\d{4}\/\d{2}\/\d{2}\//.test(url);
+  if (source.name === "Dinamani") return /\/[^/?#]+\/\d+/.test(url) || /\/\d{4}\/\d{2}\/\d{2}\//.test(url);
+  return /\/article\/|\/news\/|\/\d{4}\/\d{2}\/\d{2}\//.test(url);
 }
 
 function timeTextFromSnippet(snippet: string) {
@@ -262,18 +309,55 @@ function publishedAtFromArticlePage(html: string, url: string) {
   const jsonDate = decodeEntities(html).match(/"datePublished"\s*:\s*"([^"]+)"/i)?.[1];
   if (jsonDate && !Number.isNaN(new Date(jsonDate).getTime())) return new Date(jsonDate).toISOString();
 
-  return dateFromTamilTime(timeTextFromSnippet(html)) || dateFromArticleUrl(url);
+  return dateFromTimeText(timeTextFromSnippet(html)) || dateFromArticleUrl(url);
 }
 
-function dateFromTamilTime(text: string) {
+function dateFromTimeText(text: string) {
   const now = Date.now();
   const gmtDate = dateFromGmtClockTime(text, now);
   if (gmtDate) return gmtDate;
 
   const number = Number(text.match(/\d+/)?.[0] ?? 0);
-  if (/நிமிடம்/.test(text)) return new Date(now - number * 60 * 1000).toISOString();
-  if (/மணி/.test(text)) return new Date(now - number * 60 * 60 * 1000).toISOString();
-  if (/நாள்/.test(text)) return new Date(now - number * 24 * 60 * 60 * 1000).toISOString();
+  if (/நிமிடம்|minute|min|මිනිත්තු|විනාඩි/i.test(text)) return new Date(now - number * 60 * 1000).toISOString();
+  if (/மணி|hour|hr|පැය/i.test(text)) return new Date(now - number * 60 * 60 * 1000).toISOString();
+  if (/நாள்|day|දින/i.test(text)) return new Date(now - number * 24 * 60 * 60 * 1000).toISOString();
+  return "";
+}
+
+function dateFromDatedText(text: string) {
+  const numeric = text.match(/\b(\d{1,2})[-/](\d{1,2})[-/](20\d{2})\b/);
+  if (numeric) {
+    const day = Number(numeric[1]);
+    const month = Number(numeric[2]) - 1;
+    const year = Number(numeric[3]);
+    const parsed = new Date(Date.UTC(year, month, day, 12, 0, 0));
+    if (!Number.isNaN(parsed.getTime())) return parsed.toISOString();
+  }
+
+  const named = text.match(/\b(\d{1,2})\s+(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Sept|Oct|Nov|Dec)[a-z]*\s+(20\d{2})\b/i);
+  if (named) {
+    const months: Record<string, number> = {
+      jan: 0,
+      feb: 1,
+      mar: 2,
+      apr: 3,
+      may: 4,
+      jun: 5,
+      jul: 6,
+      aug: 7,
+      sep: 8,
+      sept: 8,
+      oct: 9,
+      nov: 10,
+      dec: 11
+    };
+    const day = Number(named[1]);
+    const month = months[named[2].toLowerCase()];
+    const year = Number(named[3]);
+    const parsed = new Date(Date.UTC(year, month, day, 12, 0, 0));
+    if (!Number.isNaN(parsed.getTime())) return parsed.toISOString();
+  }
+
   return "";
 }
 
@@ -308,11 +392,11 @@ function isWithinWindow(value: string, windowMs: number) {
 }
 
 function isRecentStory(story: Story) {
-  return isWithinWindow(story.publishedAt, twoHours);
+  return isWithinWindow(story.publishedAt, feedWindow);
 }
 
 function isPopularWindowStory(story: Story) {
-  return isWithinWindow(story.publishedAt, tenHours);
+  return isWithinWindow(story.publishedAt, popularWindow);
 }
 
 function popularityScore(story: Story) {
@@ -321,10 +405,14 @@ function popularityScore(story: Story) {
     "BBC Tamil": 26,
     "News First": 24,
     "Ada Derana": 23,
+    "Ada Derana Sinhala": 25,
     NewsWire: 22,
-    TamilWin: 21,
-    Lankasri: 21,
-    "The Hindu": 19,
+    TamilWin: 25,
+    Lankasri: 25,
+    TamilMirror: 23,
+    "Google News Sri Lanka": 22,
+    "Google News Sinhala": 22,
+    "The Hindu": 14,
     "Al Jazeera": 18,
     EconomyNext: 17,
     "Daily Mirror": 17
@@ -337,6 +425,50 @@ function popularityScore(story: Story) {
   const alertBoost = story.tone === "alert" ? 16 : 0;
 
   return (sourceWeight[story.source] ?? 10) + recency + topicBoost + imageBoost + alertBoost;
+}
+
+function sourceFeedCap(source: string) {
+  const caps: Record<string, number> = {
+    "The Hindu": 12,
+    "Al Jazeera": 12,
+    NewsWire: 14,
+    "BBC News": 10,
+    "Google News Sri Lanka": 8,
+    "Google News Sinhala": 8,
+    Lankasri: 14,
+    TamilWin: 12,
+    TamilMirror: 10,
+    "BBC Tamil": 10,
+    "Ada Derana Sinhala": 14,
+    "News 1st Sinhala": 8,
+    "News 1st Tamil": 8
+  };
+  return caps[source] ?? 8;
+}
+
+function balancedStories(items: Story[], limit: number) {
+  const ranked = [...items].sort((a, b) => {
+    const scoreDifference = popularityScore(b) - popularityScore(a);
+    if (scoreDifference !== 0) return scoreDifference;
+    return new Date(b.publishedAt).getTime() - new Date(a.publishedAt).getTime();
+  });
+  const counts = new Map<string, number>();
+  const chosen: Story[] = [];
+
+  for (const story of ranked) {
+    if (chosen.length >= limit) break;
+    const count = counts.get(story.source) ?? 0;
+    if (count >= sourceFeedCap(story.source)) continue;
+    counts.set(story.source, count + 1);
+    chosen.push(story);
+  }
+
+  for (const story of ranked) {
+    if (chosen.length >= limit) break;
+    if (!chosen.some((item) => item.id === story.id)) chosen.push(story);
+  }
+
+  return chosen.sort((a, b) => new Date(b.publishedAt).getTime() - new Date(a.publishedAt).getTime());
 }
 
 function stableId(source: string, index: number, title: string) {
@@ -383,11 +515,8 @@ export async function GET() {
       })
       .sort((a, b) => new Date(b.publishedAt).getTime() - new Date(a.publishedAt).getTime());
 
-    const stories = allStories.filter(isRecentStory).slice(0, 100);
-    const popularStories = allStories
-      .filter(isPopularWindowStory)
-      .sort((a, b) => popularityScore(b) - popularityScore(a))
-      .slice(0, 12);
+    const stories = balancedStories(allStories.filter(isRecentStory), 100);
+    const popularStories = balancedStories(allStories.filter(isPopularWindowStory), 12);
 
     return NextResponse.json({
       live: stories.length > 0,

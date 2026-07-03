@@ -18,7 +18,11 @@ function fallbackAnswer(question: string, context: string, reason: "missing-key"
       ? "OPENAI_API_KEY இன்னும் அமைக்கப்படவில்லை, அதனால் உள்ளூர் சுருக்கம் காட்டப்படுகிறது."
       : "OpenAI API இப்போது பதில் தரவில்லை, அதனால் உள்ளூர் சுருக்கம் காட்டப்படுகிறது.";
 
-  return cleanAnswer(`GOjeje AI summary: ${question || "இந்த செய்தி பற்றி"}\n\n${note}\n\n${context.slice(0, 360)}`);
+  const readableContext = context
+    .replace(/Published UTC:[^|]+ \| /g, "")
+    .replace(/Published Sri Lanka time:/g, "இலங்கை நேரம்:");
+
+  return cleanAnswer(`GOjeje AI summary: ${question || "இந்த செய்தி பற்றி"}\n\n${note}\n\n${readableContext.slice(0, 360)}`);
 }
 
 function cleanAnswer(value: string) {
@@ -49,6 +53,21 @@ function outputText(payload: unknown) {
     })
     .join("\n")
     .trim();
+}
+
+function sriLankaTime(value?: string) {
+  if (!value) return "";
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return "";
+  return new Intl.DateTimeFormat("ta-LK", {
+    timeZone: "Asia/Colombo",
+    year: "numeric",
+    month: "long",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    hour12: false
+  }).format(date);
 }
 
 function textFromHtml(html: string) {
@@ -93,12 +112,14 @@ export async function POST(request: Request) {
   const context = stories
     .map((story) => {
       const time = story.publishedAt ? new Date(story.publishedAt).toISOString() : "";
+      const slTime = sriLankaTime(story.publishedAt);
       return [
         `Title: ${story.title ?? ""}`,
         `Source: ${story.source ?? ""}`,
         `Category: ${story.category ?? ""}`,
         `Language: ${story.language ?? ""}`,
-        `Published: ${time}`,
+        `Published UTC: ${time}`,
+        `Published Sri Lanka time: ${slTime}`,
         `Link: ${story.url ?? ""}`,
         `Summary: ${story.summary ?? ""}`
       ].join(" | ");
@@ -122,7 +143,7 @@ export async function POST(request: Request) {
         {
           role: "developer",
           content:
-            "You are GOjeje, an AI news assistant for Sri Lankan and world news. Answer in simple Tamil unless the user asks otherwise. For a single news summary, write only 2-3 short clean sentences. Do not use markdown, asterisks, headings, or bullet symbols. Use original article text when available, otherwise use the provided live news context with source, category, published time, and links. If the user asks to compare platforms, compare by source and end with one short conclusion. Do not invent facts outside the provided context."
+            "You are GOjeje, an AI news assistant for Sri Lankan and world news. Answer in simple Tamil unless the user asks otherwise. For a single news summary, write only 2-3 short clean sentences. Do not use markdown, asterisks, headings, or bullet symbols. Use original article text when available, otherwise use the provided live news context with source, category, published time, and links. Always treat and describe published times as Sri Lanka time using the 'Published Sri Lanka time' field; do not mention raw UTC, UK time, GMT, or foreign source time. If the user asks to compare platforms, compare by source and end with one short conclusion. Do not invent facts outside the provided context."
         },
         {
           role: "user",
