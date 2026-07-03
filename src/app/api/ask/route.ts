@@ -18,7 +18,15 @@ function fallbackAnswer(question: string, context: string, reason: "missing-key"
       ? "OPENAI_API_KEY இன்னும் அமைக்கப்படவில்லை, அதனால் உள்ளூர் சுருக்கம் காட்டப்படுகிறது."
       : "OpenAI API இப்போது பதில் தரவில்லை, அதனால் உள்ளூர் சுருக்கம் காட்டப்படுகிறது.";
 
-  return `GOjeje AI summary: ${question || "இந்த செய்தி பற்றி"}\n\n${note}\n\nசெய்திகளில் முக்கியமான தலைப்புகள்: ${context.slice(0, 420)}`;
+  return cleanAnswer(`GOjeje AI summary: ${question || "இந்த செய்தி பற்றி"}\n\n${note}\n\n${context.slice(0, 360)}`);
+}
+
+function cleanAnswer(value: string) {
+  return value
+    .replace(/\*\*/g, "")
+    .replace(/^[-•]\s*/gm, "")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
 }
 
 function outputText(payload: unknown) {
@@ -43,10 +51,45 @@ function outputText(payload: unknown) {
     .trim();
 }
 
+function textFromHtml(html: string) {
+  return html
+    .replace(/<script[\s\S]*?<\/script>/gi, " ")
+    .replace(/<style[\s\S]*?<\/style>/gi, " ")
+    .replace(/<[^>]+>/g, " ")
+    .replace(/&nbsp;/g, " ")
+    .replace(/&amp;/g, "&")
+    .replace(/&#39;/g, "'")
+    .replace(/&quot;/g, '"')
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+async function fetchOriginalArticleText(url?: string) {
+  if (!url || url === "#") return "";
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 4500);
+  try {
+    const response = await fetch(url, {
+      signal: controller.signal,
+      headers: {
+        "user-agent": "GOjejeBot/1.0 (+https://gojeje.news)",
+        accept: "text/html"
+      }
+    });
+    if (!response.ok) return "";
+    return textFromHtml(await response.text()).slice(0, 2400);
+  } catch {
+    return "";
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 export async function POST(request: Request) {
   const body = await request.json();
   const question = String(body.question ?? "");
   const stories: StoryContext[] = Array.isArray(body.stories) ? body.stories.slice(0, 24) : [];
+  const originalArticle = stories[0]?.url ? await fetchOriginalArticleText(stories[0].url) : "";
   const context = stories
     .map((story) => {
       const time = story.publishedAt ? new Date(story.publishedAt).toISOString() : "";
@@ -61,9 +104,10 @@ export async function POST(request: Request) {
       ].join(" | ");
     })
     .join("\n");
+  const fullContext = originalArticle ? `Original article text:\n${originalArticle}\n\nLive news context:\n${context}` : context;
 
   if (!process.env.OPENAI_API_KEY) {
-    return NextResponse.json({ answer: fallbackAnswer(question, context, "missing-key"), fallback: true });
+    return NextResponse.json({ answer: fallbackAnswer(question, fullContext, "missing-key"), fallback: true });
   }
 
   const response = await fetch(OPENAI_URL, {
@@ -78,11 +122,11 @@ export async function POST(request: Request) {
         {
           role: "developer",
           content:
-            "You are GOjeje, an AI news assistant for Sri Lankan and world news. Answer in simple Tamil unless the user asks otherwise. Use the provided live news context with source, category, published time, and links. Give a clear detailed summary with: what happened, why it matters, source/platform notes, and a short conclusion. If sources differ, compare them by source. Do not invent facts outside the provided context; say when the live feed does not contain enough detail."
+            "You are GOjeje, an AI news assistant for Sri Lankan and world news. Answer in simple Tamil unless the user asks otherwise. For a single news summary, write only 2-3 short clean sentences. Do not use markdown, asterisks, headings, or bullet symbols. Use original article text when available, otherwise use the provided live news context with source, category, published time, and links. If the user asks to compare platforms, compare by source and end with one short conclusion. Do not invent facts outside the provided context."
         },
         {
           role: "user",
-          content: `Question: ${question}\n\nNews context:\n${context}`
+          content: `Question: ${question}\n\nNews context:\n${fullContext}`
         }
       ]
     })
@@ -91,11 +135,11 @@ export async function POST(request: Request) {
   if (!response.ok) {
     const errorText = await response.text();
     return NextResponse.json(
-      { answer: fallbackAnswer(question, context), error: errorText, fallback: true },
+      { answer: fallbackAnswer(question, fullContext), error: errorText, fallback: true },
       { status: 200 }
     );
   }
 
   const data = await response.json();
-  return NextResponse.json({ answer: outputText(data) || fallbackAnswer(question, context), fallback: false });
+  return NextResponse.json({ answer: cleanAnswer(outputText(data) || fallbackAnswer(question, fullContext)), fallback: false });
 }

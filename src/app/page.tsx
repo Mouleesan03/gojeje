@@ -144,7 +144,22 @@ function cleanAiLine(line: string) {
 }
 
 function safeFileName(value: string) {
-  return value.replace(/[^\p{L}\p{N}]+/gu, "-").replace(/^-|-$/g, "").slice(0, 70) || "gojeje-news";
+  return (
+    value
+      .normalize("NFKD")
+      .replace(/[\u0300-\u036f]/g, "")
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, "-")
+      .replace(/^-|-$/g, "")
+      .slice(0, 70) || "gojeje-news"
+  );
+}
+
+function storyFileName(story: Story) {
+  const stamp = Number.isNaN(new Date(story.publishedAt).getTime())
+    ? Date.now().toString()
+    : new Date(story.publishedAt).toISOString().slice(0, 16).replace(/[-:T]/g, "");
+  return `${safeFileName(`${story.source}-${story.language}-${story.category}`)}-${stamp}-gojeje.jpg`;
 }
 
 function wrapCanvasText(context: CanvasRenderingContext2D, text: string, x: number, y: number, maxWidth: number, lineHeight: number, maxLines: number) {
@@ -384,10 +399,12 @@ export default function Home() {
   }, [languageScopedStories]);
   const relatedStories = useMemo(() => {
     if (!selectedStory) return [];
-    return languageScopedStories
-      .filter((story) => story.id !== selectedStory.id)
-      .filter((story) => story.source === selectedStory.source || story.language === selectedStory.language)
-      .slice(0, 3);
+    const candidates = languageScopedStories.filter((story) => story.id !== selectedStory.id);
+    const ranked = [
+      ...candidates.filter((story) => story.source === selectedStory.source),
+      ...candidates.filter((story) => story.source !== selectedStory.source && story.category === selectedStory.category)
+    ];
+    return ranked.filter((story, index, list) => list.findIndex((item) => item.id === story.id) === index).slice(0, 2);
   }, [languageScopedStories, selectedStory]);
 
   async function askPrompt(prompt: string, story?: Story) {
@@ -428,7 +445,7 @@ export default function Home() {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
-        question: `இந்த செய்தியை எளிதாக சுருக்கவும்: ${story.title}`,
+        question: `இந்த செய்தியை 3 குறுகிய வாக்கியங்களில், நட்சத்திர குறிகள் இல்லாமல், சுத்தமாக சுருக்கவும்: ${story.title}`,
         stories: [story, ...languageScopedStories]
       })
     });
@@ -489,6 +506,14 @@ export default function Home() {
     setSelectedAiLoading(false);
   }
 
+  function openStorySummary(event: MouseEvent<HTMLButtonElement>, story: Story) {
+    event.stopPropagation();
+    setSelectedStory(story);
+    setSelectedAiAnswer("");
+    setSelectedAiLoading(false);
+    setStoryIndex(null);
+  }
+
   async function createStoryCard(story: Story) {
     const canvas = document.createElement("canvas");
     canvas.width = 1080;
@@ -540,12 +565,12 @@ export default function Home() {
     context.restore();
 
     context.fillStyle = "#141414";
-    context.font = "700 54px Inter, Noto Sans Tamil, Arial, sans-serif";
-    const nextY = wrapCanvasText(context, story.title, 92, 800, 860, 72, 5);
+    context.font = "700 46px Inter, Noto Sans Tamil, Arial, sans-serif";
+    const nextY = wrapCanvasText(context, story.title, 92, 790, 860, 60, 4);
 
     context.fillStyle = "#606060";
-    context.font = "400 34px Inter, Noto Sans Tamil, Arial, sans-serif";
-    wrapCanvasText(context, shortText(story.summary, 190), 92, Math.min(nextY + 42, 1095), 860, 48, 3);
+    context.font = "400 32px Inter, Noto Sans Tamil, Arial, sans-serif";
+    wrapCanvasText(context, shortText(story.summary, 170), 92, Math.min(nextY + 36, 1088), 860, 44, 3);
 
     context.fillStyle = "#bb1919";
     context.font = "700 28px Inter, Arial, sans-serif";
@@ -564,7 +589,7 @@ export default function Home() {
     const url = URL.createObjectURL(blob);
     const link = document.createElement("a");
     link.href = url;
-    link.download = `${safeFileName(story.title)}-gojeje.jpg`;
+    link.download = storyFileName(story);
     document.body.appendChild(link);
     link.click();
     link.remove();
@@ -573,10 +598,10 @@ export default function Home() {
 
   async function shareStoryCard(story: Story) {
     const blob = await createStoryCard(story);
-    const file = new File([blob], `${safeFileName(story.title)}-gojeje.jpg`, { type: "image/jpeg" });
+    const file = new File([blob], storyFileName(story), { type: "image/jpeg" });
     const shareData = {
       title: story.title,
-      text: `${story.title}\n${story.source} · GOjeje`,
+      text: `${story.title}\n${story.source} · ${relativeTime(story.publishedAt)} ago · GOjeje`,
       url: story.url && story.url !== "#" ? story.url : window.location.href
     };
 
@@ -861,7 +886,7 @@ export default function Home() {
             </div>
 
             <div className="article-grid">
-              {paginatedLatestStories.map((story) => (
+              {paginatedLatestStories.length ? paginatedLatestStories.map((story) => (
                 <article className="article-card" key={story.id} onClick={() => openSummary(story)}>
                   <div className={`article-thumb ${toneClass[story.tone] ?? "tone-city"}`}>
                     <NewsImage src={story.image} />
@@ -874,7 +899,7 @@ export default function Home() {
                     </div>
                   </div>
                 </article>
-              ))}
+              )) : <div className="feed-empty">{loading ? "Loading recent news..." : "No matching recent news right now."}</div>}
             </div>
             {feedStories.length > latestPageSize && (
               <div className="pagination-row">
@@ -991,15 +1016,24 @@ export default function Home() {
               <h2>{activeStory.title}</h2>
               <p>{shortText(activeStory.summary, 230)}</p>
               <div className="viewer-actions">
-                <button type="button" onClick={() => openSummary(activeStory)}>Read</button>
-                <button type="button" className="summary-action" onClick={() => summarizeStory(activeStory)}>
+                <button type="button" onClick={(event) => openStorySummary(event, activeStory)}>Read</button>
+                <button type="button" className="summary-action" onClick={(event) => {
+                  event.stopPropagation();
+                  summarizeStory(activeStory);
+                }}>
                   <img src="/icons/summary.svg" alt="" aria-hidden="true" />
                   Summary
                 </button>
-                <button className="icon-action" type="button" onClick={() => shareStoryCard(activeStory)} aria-label="Share story card" title="Share">
+                <button className="icon-action" type="button" onClick={(event) => {
+                  event.stopPropagation();
+                  shareStoryCard(activeStory);
+                }} aria-label="Share story card" title="Share">
                   <img src="/icons/share.svg" alt="" aria-hidden="true" />
                 </button>
-                <button className="icon-action" type="button" onClick={() => downloadStoryCard(activeStory)} aria-label="Download story card as JPG" title="Download">
+                <button className="icon-action" type="button" onClick={(event) => {
+                  event.stopPropagation();
+                  downloadStoryCard(activeStory);
+                }} aria-label="Download story card as JPG" title="Download">
                   <img src="/icons/download.svg" alt="" aria-hidden="true" />
                 </button>
               </div>

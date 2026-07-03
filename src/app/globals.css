@@ -1498,6 +1498,18 @@ h3 {
   gap: 8px;
 }
 
+.feed-empty {
+  grid-column: 1 / -1;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: #fff;
+  padding: 18px;
+  color: var(--muted);
+  font-size: 14px;
+  font-weight: 600;
+  text-align: center;
+}
+
 .article-card {
   display: grid;
   grid-template-columns: 70px 1fr;
@@ -1608,7 +1620,7 @@ h3 {
 .viewer-close {
   position: absolute;
   right: 16px;
-  top: 16px;
+  top: 24px;
   z-index: 2;
   width: 38px;
   aspect-ratio: 1;
@@ -1617,6 +1629,18 @@ h3 {
   background: rgba(255, 255, 255, 0.86);
   color: var(--ink);
   font-size: 24px;
+}
+
+.read-modal .close-button {
+  position: sticky;
+  top: 0;
+  z-index: 8;
+  display: grid;
+  margin-left: auto;
+  margin-bottom: -38px;
+  background: rgba(255, 255, 255, 0.94);
+  box-shadow: 0 10px 26px rgba(0, 0, 0, 0.16);
+  backdrop-filter: blur(14px);
 }
 
 .modal-image {
@@ -1631,6 +1655,10 @@ h3 {
   color: #fff;
   font-size: 34px;
   font-weight: 600;
+}
+
+.modal-image img {
+  object-fit: cover;
 }
 
 .read-modal h2 {
@@ -1875,7 +1903,7 @@ h3 {
 
 .viewer-hit {
   position: absolute;
-  z-index: 4;
+  z-index: 1;
   top: 80px;
   bottom: 40px;
   width: 28%;
@@ -2293,12 +2321,12 @@ h3 {
   .read-modal {
     width: 100%;
     max-height: calc(100vh - 20px);
-    padding: 14px;
+    padding: 24px 14px 14px;
     border-radius: 14px;
   }
 
   .modal-image {
-    height: 150px;
+    height: 190px;
     margin-bottom: 12px;
   }
 
