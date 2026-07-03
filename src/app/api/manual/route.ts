@@ -79,7 +79,6 @@ function cleanChoice<T extends string>(value: unknown, choices: readonly T[], fa
 
 function toSupabaseRow(body: Record<string, unknown>) {
   return {
-    id: crypto.randomUUID(),
     title: cleanString(body.title),
     summary: cleanString(body.summary, "GOjeje manual update."),
     source: cleanString(body.source, "GOjeje"),
@@ -117,11 +116,38 @@ export async function POST(request: Request) {
   if (!config) return NextResponse.json({ error: "Supabase is not configured." }, { status: 503 });
 
   const body = (await request.json()) as Record<string, unknown>;
-  const row = toSupabaseRow(body);
+  const row = { id: crypto.randomUUID(), ...toSupabaseRow(body) };
   if (!row.title) return NextResponse.json({ error: "Title is required." }, { status: 400 });
 
   const response = await fetch(`${config.url}/rest/v1/${tableName}`, {
     method: "POST",
+    headers: {
+      ...headers(config.key),
+      Prefer: "return=representation"
+    },
+    body: JSON.stringify(row)
+  });
+
+  if (!response.ok) {
+    return NextResponse.json({ error: await response.text() }, { status: 500 });
+  }
+
+  const rows = (await response.json()) as SupabaseManualStory[];
+  return NextResponse.json({ story: toStory(rows[0]) });
+}
+
+export async function PATCH(request: Request) {
+  const config = supabaseConfig();
+  if (!config) return NextResponse.json({ error: "Supabase is not configured." }, { status: 503 });
+
+  const body = (await request.json()) as Record<string, unknown>;
+  const id = cleanString(body.id);
+  const row = toSupabaseRow(body);
+  if (!id) return NextResponse.json({ error: "Missing id." }, { status: 400 });
+  if (!row.title) return NextResponse.json({ error: "Title is required." }, { status: 400 });
+
+  const response = await fetch(`${config.url}/rest/v1/${tableName}?id=eq.${encodeURIComponent(id)}`, {
+    method: "PATCH",
     headers: {
       ...headers(config.key),
       Prefer: "return=representation"

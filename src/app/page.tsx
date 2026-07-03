@@ -47,7 +47,8 @@ const quickSearches = [
   { id: "BBC Tamil", label: "BBC Tamil" },
   { id: "TamilWin", label: "TamilWin" },
   { id: "Lankasri", label: "Lankasri" },
-  { id: "News First", label: "News First" }
+  { id: "News First", label: "News First" },
+  { id: "Saved", label: "Saved" }
 ];
 
 const toneClass: Record<string, string> = {
@@ -66,6 +67,7 @@ const categoryWindow = 8 * oneHourWindow;
 const storyWindow = thirtyMinuteWindow;
 const storyLimit = 35;
 const manualStorageKey = "gojeje-manual-stories";
+const savedStoriesStorageKey = "gojeje-saved-stories";
 
 const emptyManualDraft: ManualDraft = {
   title: "",
@@ -344,11 +346,12 @@ function storyMediaType(story: Story) {
   return story.mediaType ?? "news";
 }
 
-function youtubeEmbedUrl(value?: string) {
+function youtubeEmbedUrl(value?: string, muted = true) {
   if (!value) return "";
   const trimmed = value.trim();
   const directId = trimmed.match(/^[a-zA-Z0-9_-]{11}$/)?.[0];
-  if (directId) return `https://www.youtube.com/embed/${directId}?playsinline=1&rel=0&autoplay=1&mute=1&controls=0&modestbranding=1`;
+  const playerParams = `playsinline=1&rel=0&autoplay=1&mute=${muted ? "1" : "0"}&controls=0&modestbranding=1`;
+  if (directId) return `https://www.youtube.com/embed/${directId}?${playerParams}`;
 
   try {
     const url = new URL(trimmed);
@@ -357,9 +360,19 @@ function youtubeEmbedUrl(value?: string) {
     const shortsId = url.pathname.includes("/shorts/") ? url.pathname.split("/shorts/")[1]?.split("/")[0] : "";
     const embedId = url.pathname.includes("/embed/") ? url.pathname.split("/embed/")[1]?.split("/")[0] : "";
     const id = shortId || watchId || shortsId || embedId;
-    return id ? `https://www.youtube.com/embed/${id}?playsinline=1&rel=0&autoplay=1&mute=1&controls=0&modestbranding=1` : "";
+    return id ? `https://www.youtube.com/embed/${id}?${playerParams}` : "";
   } catch {
     return "";
+  }
+}
+
+function isHttpUrl(value: string) {
+  if (!value.trim()) return true;
+  try {
+    const url = new URL(value);
+    return url.protocol === "http:" || url.protocol === "https:";
+  } catch {
+    return false;
   }
 }
 
@@ -388,8 +401,14 @@ export default function Home() {
   const [backdoorOpen, setBackdoorOpen] = useState(false);
   const [manualDraft, setManualDraft] = useState<ManualDraft>(emptyManualDraft);
   const [manualStories, setManualStories] = useState<Story[]>([]);
+  const [editingManualId, setEditingManualId] = useState("");
+  const [adminSaveStatus, setAdminSaveStatus] = useState<"idle" | "saving" | "published" | "error">("idle");
+  const [adminValidation, setAdminValidation] = useState("");
+  const [savedStoryIds, setSavedStoryIds] = useState<string[]>([]);
   const [activeVideoStoryId, setActiveVideoStoryId] = useState("");
   const [pausedVideoStoryIds, setPausedVideoStoryIds] = useState<Set<string>>(new Set());
+  const [soundVideoStoryIds, setSoundVideoStoryIds] = useState<Set<string>>(new Set());
+  const [bottomNavCompact, setBottomNavCompact] = useState(false);
   const summaryAudioRef = useRef<HTMLAudioElement | null>(null);
   const summaryAudioUrlsRef = useRef<Map<string, string>>(new Map());
 
@@ -415,6 +434,8 @@ export default function Home() {
     try {
       const saved = window.localStorage.getItem(manualStorageKey);
       if (saved) setManualStories(JSON.parse(saved));
+      const savedIds = window.localStorage.getItem(savedStoriesStorageKey);
+      if (savedIds) setSavedStoryIds(JSON.parse(savedIds));
     } catch {
       setManualStories([]);
     }
@@ -441,6 +462,10 @@ export default function Home() {
   }, [manualStories]);
 
   useEffect(() => {
+    window.localStorage.setItem(savedStoriesStorageKey, JSON.stringify(savedStoryIds));
+  }, [savedStoryIds]);
+
+  useEffect(() => {
     setQuestion("");
     setAnswer("");
   }, [languageFilter]);
@@ -448,6 +473,23 @@ export default function Home() {
   useEffect(() => {
     setLatestPage(0);
   }, [activeNav, languageFilter, query, recentTopic]);
+
+  useEffect(() => {
+    let frame = 0;
+    const updateBottomNav = () => {
+      window.cancelAnimationFrame(frame);
+      frame = window.requestAnimationFrame(() => {
+        setBottomNavCompact(window.scrollY > 80);
+      });
+    };
+
+    updateBottomNav();
+    window.addEventListener("scroll", updateBottomNav, { passive: true });
+    return () => {
+      window.cancelAnimationFrame(frame);
+      window.removeEventListener("scroll", updateBottomNav);
+    };
+  }, []);
 
   useEffect(() => {
     stopSummaryAudio();
@@ -547,8 +589,9 @@ export default function Home() {
     if (recentTopic === "Must Know") return filteredStories.filter((story) => story.tone === "alert" || isTopWindowStory(story) || isSriLankaStory(story)).slice(0, 100);
     if (recentTopic === "Sri Lanka") return filteredStories.filter(isSriLankaStory);
     if (recentTopic === "World") return filteredStories.filter(isWorldStory);
+    if (recentTopic === "Saved") return filteredStories.filter((story) => savedStoryIds.includes(story.id));
     return filteredStories.filter((story) => [story.source, story.category, story.title, story.summary].join(" ").toLowerCase().includes(recentTopic.toLowerCase()));
-  }, [filteredStories, isCategoryFeed, recentTopic]);
+  }, [filteredStories, isCategoryFeed, recentTopic, savedStoryIds]);
   const latestStories = topicFilteredStories.filter((story) => !leadCarouselStories.some((leadStory) => leadStory.id === story.id)).slice(0, 100);
   const feedStories = isCategoryFeed ? filteredStories.slice(0, 100) : latestStories;
   const latestPageSize = 15;
@@ -590,7 +633,6 @@ export default function Home() {
       .sort((a, b) => b.score - a.score)[0];
     return best && best.score >= 0.8 ? [best.story] : [];
   }, [languageScopedStories, selectedStory]);
-
   async function askPrompt(prompt: string, story?: Story) {
     if (!prompt.trim()) return;
     setAsking(true);
@@ -621,12 +663,25 @@ export default function Home() {
 
   async function saveManualStory(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    if (!manualDraft.title.trim()) return;
+    if (!manualDraft.title.trim()) {
+      setAdminValidation("Title is required.");
+      return;
+    }
+    if (!isHttpUrl(manualDraft.url) || !isHttpUrl(manualDraft.image)) {
+      setAdminValidation("Use a valid http or https link.");
+      return;
+    }
+    if (manualDraft.mediaType === "video" && !youtubeEmbedUrl(manualDraft.videoUrl || manualDraft.url)) {
+      setAdminValidation("Add a valid YouTube link or video ID.");
+      return;
+    }
+    setAdminValidation("");
+    setAdminSaveStatus("saving");
     try {
       const response = await fetch("/api/manual", {
-        method: "POST",
+        method: editingManualId ? "PATCH" : "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(manualDraft)
+        body: JSON.stringify(editingManualId ? { id: editingManualId, ...manualDraft } : manualDraft)
       });
 
       if (!response.ok) throw new Error("Supabase save failed");
@@ -634,10 +689,39 @@ export default function Home() {
       if (!data.story) throw new Error("Missing saved story");
       setManualStories((items) => [data.story, ...items.filter((story) => story.id !== data.story.id)].slice(0, 80));
       setManualDraft(emptyManualDraft);
+      setEditingManualId("");
+      setAdminSaveStatus("published");
     } catch {
-      setManualStories((items) => [manualStoryFromDraft(manualDraft), ...items].slice(0, 80));
+      const fallbackStory = editingManualId
+        ? { ...manualStoryFromDraft(manualDraft), id: editingManualId }
+        : manualStoryFromDraft(manualDraft);
+      setManualStories((items) => [fallbackStory, ...items.filter((story) => story.id !== fallbackStory.id)].slice(0, 80));
       setManualDraft(emptyManualDraft);
+      setEditingManualId("");
+      setAdminSaveStatus("error");
     }
+  }
+
+  function editManualStory(story: Story) {
+    setEditingManualId(story.id);
+    setAdminSaveStatus("idle");
+    setAdminValidation("");
+    setManualDraft({
+      title: story.title,
+      summary: story.summary,
+      source: story.source,
+      category: story.category,
+      language: story.language,
+      url: story.url === "#" ? "" : story.url,
+      image: story.image,
+      videoUrl: story.videoUrl ?? "",
+      mediaType: storyMediaType(story),
+      placement: story.placement ?? "both"
+    });
+  }
+
+  function toggleSavedStory(story: Story) {
+    setSavedStoryIds((ids) => (ids.includes(story.id) ? ids.filter((id) => id !== story.id) : [story.id, ...ids]));
   }
 
   async function removeManualStory(id: string) {
@@ -1140,7 +1224,35 @@ export default function Home() {
                   <input value={manualDraft.videoUrl} onChange={(event) => setManualDraft((draft) => ({ ...draft, videoUrl: event.target.value }))} placeholder="YouTube link or video ID" />
                 </label>
               )}
-              <button type="submit">Publish now</button>
+              <section className={`admin-preview preview-${manualDraft.mediaType}`}>
+                <div className="admin-preview-media">
+                  {manualDraft.mediaType === "video" ? (
+                    youtubeEmbedUrl(manualDraft.videoUrl || manualDraft.url) ? <span>Video link ready</span> : <span>Add a YouTube link</span>
+                  ) : (
+                    <NewsImage src={manualDraft.image} />
+                  )}
+                </div>
+                <div>
+                  <span>{manualDraft.placement === "both" ? "Post + Stories" : manualDraft.placement === "story" ? "Stories" : "Post"} · {manualDraft.mediaType}</span>
+                  <strong>{manualDraft.title || "Preview title"}</strong>
+                  {manualDraft.mediaType === "news" ? <p>{manualDraft.summary || "Preview summary will appear here."}</p> : null}
+                </div>
+              </section>
+              {adminValidation ? <p className="admin-validation">{adminValidation}</p> : null}
+              <button type="submit" disabled={adminSaveStatus === "saving"}>{adminSaveStatus === "saving" ? "Saving..." : editingManualId ? "Update post" : "Publish now"}</button>
+              {editingManualId && (
+                <button type="button" className="admin-secondary-action" onClick={() => {
+                  setEditingManualId("");
+                  setManualDraft(emptyManualDraft);
+                  setAdminValidation("");
+                  setAdminSaveStatus("idle");
+                }}>Cancel edit</button>
+              )}
+              {adminSaveStatus !== "idle" && (
+                <p className={`admin-save-status status-${adminSaveStatus}`}>
+                  {adminSaveStatus === "saving" ? "Saving..." : adminSaveStatus === "published" ? "Published" : "Could not save. Saved in this browser as fallback."}
+                </p>
+              )}
             </form>
             {manualStories.length > 0 && (
               <div className="manual-list">
@@ -1149,6 +1261,7 @@ export default function Home() {
                   <div key={story.id}>
                     <span>{story.placement === "both" ? "Post + Stories" : story.placement === "story" ? "Stories" : "Post"} · {storyMediaType(story)}</span>
                     <strong>{story.title}</strong>
+                    <button type="button" onClick={() => editManualStory(story)}>Edit</button>
                     <button type="button" onClick={() => removeManualStory(story.id)}>Delete</button>
                   </div>
                 ))}
@@ -1174,6 +1287,12 @@ export default function Home() {
         </section>
       ) : activeNav === "Stories" ? (
         <section className="stories-page" id="stories">
+          {webStories.length > 1 && (
+            <div className="story-swipe-hint" aria-hidden="true">
+              <span>↑</span>
+              Swipe up
+            </div>
+          )}
           <div className="tiktok-story-feed">
             {webStories.length ? webStories.map((story, index) => (
               <article
@@ -1185,7 +1304,7 @@ export default function Home() {
                   <>
                     {activeVideoStoryId === story.id && !pausedVideoStoryIds.has(story.id) ? (
                       <iframe
-                        src={youtubeEmbedUrl(story.videoUrl || story.url)}
+                        src={youtubeEmbedUrl(story.videoUrl || story.url, !soundVideoStoryIds.has(story.id))}
                         title={story.title}
                         allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share"
                         allowFullScreen
@@ -1211,6 +1330,26 @@ export default function Home() {
                     >
                       {pausedVideoStoryIds.has(story.id) ? "▶" : "Ⅱ"}
                     </button>
+                    <button
+                      className={`video-sound-button ${soundVideoStoryIds.has(story.id) ? "active" : ""}`}
+                      type="button"
+                      onClick={() => {
+                        setActiveVideoStoryId(story.id);
+                        setPausedVideoStoryIds((items) => {
+                          const next = new Set(items);
+                          next.delete(story.id);
+                          return next;
+                        });
+                        setSoundVideoStoryIds((items) => {
+                          const next = new Set(items);
+                          if (next.has(story.id)) next.delete(story.id);
+                          else next.add(story.id);
+                          return next;
+                        });
+                      }}
+                    >
+                      {soundVideoStoryIds.has(story.id) ? "Sound on" : "Tap for sound"}
+                    </button>
                   </>
                 ) : (
                   <button className="tiktok-media-button" type="button" onClick={() => openStory(index)} aria-label={story.title}>
@@ -1230,7 +1369,13 @@ export default function Home() {
                   <button className="tiktok-open-button" type="button" onClick={() => openStory(index)} aria-label="Open image story">Open</button>
                 )}
               </article>
-            )) : <div className="lead-empty">{loading ? "Loading stories..." : "No recent stories."}</div>}
+            )) : (
+              <div className="stories-empty-state">
+                <span>{loading ? "Loading" : "Stories"}</span>
+                <h2>{loading ? "Loading stories..." : "No stories right now"}</h2>
+                <p>{loading ? "Checking recent posts and videos." : "New image and video stories will appear here when they are available."}</p>
+              </div>
+            )}
           </div>
         </section>
       ) : (
@@ -1259,7 +1404,11 @@ export default function Home() {
                   </div>
                 ) : (
                   <article className="lead-card popular-lead-card">
-                    <div className="lead-empty">{loading ? "Loading live news..." : "No stories found."}</div>
+                    <div className="lead-empty highlight-empty">
+                      <span>{loading ? "Loading" : "Highlights"}</span>
+                      <strong>{loading ? "Loading live news..." : "No fresh highlights right now"}</strong>
+                      <p>{loading ? "Checking the latest sources." : "Recent Feed still has the latest news from the last 5 hours."}</p>
+                    </div>
                   </article>
                 )}
               </section>
@@ -1293,7 +1442,7 @@ export default function Home() {
                     </div>
                   </div>
                 </article>
-              )) : <div className="feed-empty">{loading ? "Loading recent news..." : "No matching recent news right now."}</div>}
+              )) : <div className="feed-empty">{loading ? "Loading recent news..." : isCategoryFeed ? `No ${activeNav.toLowerCase()} news right now.` : "No other news from the last 5 hours."}</div>}
             </div>
             {feedStories.length > latestPageSize && (
               <div className="pagination-row">
@@ -1310,7 +1459,7 @@ export default function Home() {
         </>
       )}
 
-      <nav className="mobile-glass-nav" aria-label="Mobile sections">
+      <nav className={`mobile-glass-nav ${bottomNavCompact ? "compact" : ""}`} aria-label="Mobile sections">
         {navItems.map((item) => (
           <button key={item.id} type="button" className={activeNav === item.id ? "active" : ""} onClick={() => chooseNav(item.id)}>
             <img src={item.icon} alt="" aria-hidden="true" />
@@ -1334,7 +1483,10 @@ export default function Home() {
               <span className="language-chip">{selectedStory.language}</span>
               <span className="time-chip">{relativeTime(selectedStory.publishedAt)} ago</span>
             </div>
-            <div className="card-actions">
+            <div className="card-actions modal-actions">
+              <button type="button" className="save-action" onClick={() => toggleSavedStory(selectedStory)}>
+                {savedStoryIds.includes(selectedStory.id) ? "Saved" : "Save"}
+              </button>
               <button type="button" className="summary-action" onClick={() => summarizeStory(selectedStory)} disabled={selectedAiLoading}>
                 <img src="/icons/summary.svg" alt="" aria-hidden="true" />
                 {selectedAiLoading ? "Summarising..." : "Summary"}
