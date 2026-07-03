@@ -348,7 +348,7 @@ function youtubeEmbedUrl(value?: string) {
   if (!value) return "";
   const trimmed = value.trim();
   const directId = trimmed.match(/^[a-zA-Z0-9_-]{11}$/)?.[0];
-  if (directId) return `https://www.youtube.com/embed/${directId}?playsinline=1&rel=0`;
+  if (directId) return `https://www.youtube.com/embed/${directId}?playsinline=1&rel=0&autoplay=1&mute=1&controls=0&modestbranding=1`;
 
   try {
     const url = new URL(trimmed);
@@ -357,7 +357,7 @@ function youtubeEmbedUrl(value?: string) {
     const shortsId = url.pathname.includes("/shorts/") ? url.pathname.split("/shorts/")[1]?.split("/")[0] : "";
     const embedId = url.pathname.includes("/embed/") ? url.pathname.split("/embed/")[1]?.split("/")[0] : "";
     const id = shortId || watchId || shortsId || embedId;
-    return id ? `https://www.youtube.com/embed/${id}?playsinline=1&rel=0` : "";
+    return id ? `https://www.youtube.com/embed/${id}?playsinline=1&rel=0&autoplay=1&mute=1&controls=0&modestbranding=1` : "";
   } catch {
     return "";
   }
@@ -388,6 +388,8 @@ export default function Home() {
   const [backdoorOpen, setBackdoorOpen] = useState(false);
   const [manualDraft, setManualDraft] = useState<ManualDraft>(emptyManualDraft);
   const [manualStories, setManualStories] = useState<Story[]>([]);
+  const [activeVideoStoryId, setActiveVideoStoryId] = useState("");
+  const [pausedVideoStoryIds, setPausedVideoStoryIds] = useState<Set<string>>(new Set());
   const summaryAudioRef = useRef<HTMLAudioElement | null>(null);
   const summaryAudioUrlsRef = useRef<Map<string, string>>(new Map());
 
@@ -481,6 +483,30 @@ export default function Home() {
     const popular = storyWindowStories.filter((story) => popularSources.includes(story.source) || story.tone === "alert" || isTopWindowStory(story) || isSriLankaStory(story));
     return (popular.length ? popular : tamilStories.length ? tamilStories : storyWindowStories).slice(0, storyLimit);
   }, [storyWindowStories, tamilStories]);
+
+  useEffect(() => {
+    if (activeNav !== "Stories") {
+      setActiveVideoStoryId("");
+      return;
+    }
+
+    const cards = Array.from(document.querySelectorAll<HTMLElement>("[data-story-video-id]"));
+    if (!cards.length) return;
+
+    const observer = new IntersectionObserver(
+      (entries) => {
+        const visible = entries
+          .filter((entry) => entry.isIntersecting)
+          .sort((a, b) => b.intersectionRatio - a.intersectionRatio)[0];
+        const id = visible?.target.getAttribute("data-story-video-id");
+        if (id) setActiveVideoStoryId(id);
+      },
+      { threshold: [0.55, 0.72, 0.9] }
+    );
+
+    cards.forEach((card) => observer.observe(card));
+    return () => observer.disconnect();
+  }, [activeNav, webStories]);
 
   const filteredStories = useMemo(() => {
     const search = query.trim().toLowerCase();
@@ -1150,14 +1176,42 @@ export default function Home() {
         <section className="stories-page" id="stories">
           <div className="tiktok-story-feed">
             {webStories.length ? webStories.map((story, index) => (
-              <article className={`tiktok-story-card story-kind-${storyMediaType(story)}`} key={story.id}>
+              <article
+                className={`tiktok-story-card story-kind-${storyMediaType(story)}`}
+                key={story.id}
+                data-story-video-id={storyMediaType(story) === "video" ? story.id : undefined}
+              >
                 {storyMediaType(story) === "video" && youtubeEmbedUrl(story.videoUrl || story.url) ? (
-                  <iframe
-                    src={youtubeEmbedUrl(story.videoUrl || story.url)}
-                    title={story.title}
-                    allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share"
-                    allowFullScreen
-                  />
+                  <>
+                    {activeVideoStoryId === story.id && !pausedVideoStoryIds.has(story.id) ? (
+                      <iframe
+                        src={youtubeEmbedUrl(story.videoUrl || story.url)}
+                        title={story.title}
+                        allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share"
+                        allowFullScreen
+                      />
+                    ) : (
+                      <div className={`story-media ${toneClass[story.tone] ?? "tone-city"}`}>
+                        <NewsImage src={story.image} />
+                      </div>
+                    )}
+                    <button
+                      className={`video-toggle-button ${pausedVideoStoryIds.has(story.id) ? "paused" : ""}`}
+                      type="button"
+                      aria-label={pausedVideoStoryIds.has(story.id) ? "Play video" : "Pause video"}
+                      onClick={() => {
+                        setActiveVideoStoryId(story.id);
+                        setPausedVideoStoryIds((items) => {
+                          const next = new Set(items);
+                          if (next.has(story.id)) next.delete(story.id);
+                          else next.add(story.id);
+                          return next;
+                        });
+                      }}
+                    >
+                      {pausedVideoStoryIds.has(story.id) ? "▶" : "Ⅱ"}
+                    </button>
+                  </>
                 ) : (
                   <button className="tiktok-media-button" type="button" onClick={() => openStory(index)} aria-label={story.title}>
                     <div className={`story-media ${toneClass[story.tone] ?? "tone-city"}`}>
@@ -1165,7 +1219,7 @@ export default function Home() {
                     </div>
                   </button>
                 )}
-                {storyMediaType(story) !== "image" && (
+                {storyMediaType(story) === "news" && (
                   <div className="tiktok-story-copy">
                     <span>{story.source} · {relativeTime(story.publishedAt)} ago</span>
                     <h3>{story.title}</h3>

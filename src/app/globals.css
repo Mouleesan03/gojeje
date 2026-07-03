@@ -1237,10 +1237,52 @@ h3 {
 }
 
 .tiktok-story-card.story-kind-video iframe {
-  position: relative;
-  width: min(100%, 560px);
+  position: absolute;
+  inset: 0;
+  width: 100%;
   height: 100%;
   background: #000;
+  pointer-events: none;
+}
+
+.tiktok-story-card.story-kind-video .story-media img {
+  object-fit: cover;
+}
+
+.video-toggle-button {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  z-index: 5;
+  display: grid;
+  place-items: center;
+  width: 68px;
+  height: 68px;
+  transform: translate(-50%, -50%);
+  border: 1px solid rgba(255, 255, 255, 0.28);
+  border-radius: 50%;
+  background: rgba(0, 0, 0, 0.24);
+  color: #fff;
+  font-size: 24px;
+  font-weight: 800;
+  line-height: 1;
+  opacity: 0;
+  backdrop-filter: blur(12px);
+  transition: opacity 160ms ease, transform 160ms ease, background 160ms ease;
+}
+
+.tiktok-story-card.story-kind-video:hover .video-toggle-button,
+.video-toggle-button:focus-visible,
+.video-toggle-button.paused {
+  opacity: 1;
+}
+
+.video-toggle-button:active {
+  transform: translate(-50%, -50%) scale(0.94);
+}
+
+.video-toggle-button.paused {
+  background: rgba(0, 0, 0, 0.56);
 }
 
 .tiktok-story-card .story-media::after {
@@ -2311,6 +2353,18 @@ h3 {
   .site-shell.stories-active .tiktok-story-copy {
     right: 18px;
     bottom: 18px;
+  }
+
+  .site-shell.stories-active .video-toggle-button {
+    width: 58px;
+    height: 58px;
+    font-size: 21px;
+    opacity: 0.16;
+  }
+
+  .site-shell.stories-active .video-toggle-button.paused,
+  .site-shell.stories-active .video-toggle-button:focus-visible {
+    opacity: 1;
   }
 
   .site-shell.stories-active .mobile-glass-nav {
