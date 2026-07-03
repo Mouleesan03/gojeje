@@ -13,6 +13,23 @@ type Story = {
   url: string;
   image: string;
   tone: string;
+  placement?: "post" | "story" | "both";
+  manual?: boolean;
+  mediaType?: "news" | "image" | "video";
+  videoUrl?: string;
+};
+
+type ManualDraft = {
+  title: string;
+  summary: string;
+  source: string;
+  category: string;
+  language: "Tamil" | "English" | "Sinhala";
+  url: string;
+  image: string;
+  videoUrl: string;
+  mediaType: "news" | "image" | "video";
+  placement: "post" | "story" | "both";
 };
 
 const navItems = [
@@ -41,11 +58,27 @@ const toneClass: Record<string, string> = {
   city: "tone-city"
 };
 
-const importantWindow = 60 * 60 * 1000;
+const thirtyMinuteWindow = 30 * 60 * 1000;
+const importantWindow = thirtyMinuteWindow;
 const oneHourWindow = 60 * 60 * 1000;
-const feedWindow = 8 * oneHourWindow;
+const feedWindow = 5 * oneHourWindow;
 const categoryWindow = 8 * oneHourWindow;
-const storyWindow = oneHourWindow;
+const storyWindow = thirtyMinuteWindow;
+const storyLimit = 35;
+const manualStorageKey = "gojeje-manual-stories";
+
+const emptyManualDraft: ManualDraft = {
+  title: "",
+  summary: "",
+  source: "GOjeje",
+  category: "Sri Lanka",
+  language: "Tamil",
+  url: "",
+  image: "",
+  videoUrl: "",
+  mediaType: "news",
+  placement: "both"
+};
 
 type LanguageFilter = "All" | "Tamil" | "English" | "Sinhala";
 
@@ -57,10 +90,10 @@ const languageLabels: Record<LanguageFilter, string> = {
 };
 
 const defaultQuestions: Record<LanguageFilter, string> = {
-  All: "Give me the most important news updates from the last 8 hours.",
-  Tamil: "கடந்த 8 மணி நேரத்தில் முக்கியமான தமிழ் செய்திகள் என்ன?",
-  English: "Give me the important English news updates from the last 8 hours.",
-  Sinhala: "Give me the important Sinhala Sri Lankan news updates from the last 8 hours."
+  All: "Give me the most important news updates from the last 5 hours.",
+  Tamil: "கடந்த 5 மணி நேரத்தில் முக்கியமான தமிழ் செய்திகள் என்ன?",
+  English: "Give me the important English news updates from the last 5 hours.",
+  Sinhala: "Give me the important Sinhala Sri Lankan news updates from the last 5 hours."
 };
 
 function relativeTime(value: string) {
@@ -279,6 +312,57 @@ function drawDummyCardImage(context: CanvasRenderingContext2D, x: number, y: num
   context.stroke();
 }
 
+function manualStoryFromDraft(draft: ManualDraft): Story {
+  const now = new Date().toISOString();
+  return {
+    id: `manual-${Date.now()}`,
+    title: draft.title.trim(),
+    summary: draft.summary.trim() || "GOjeje manual update.",
+    source: draft.source.trim() || "GOjeje",
+    category: draft.category.trim() || "Sri Lanka",
+    language: draft.language,
+    publishedAt: now,
+    url: draft.url.trim() || "#",
+    image: draft.image.trim(),
+    tone: "city",
+    placement: draft.placement,
+    manual: true,
+    mediaType: draft.mediaType,
+    videoUrl: draft.videoUrl.trim()
+  };
+}
+
+function isPostVisible(story: Story) {
+  return story.placement !== "story";
+}
+
+function isStoryVisible(story: Story) {
+  return story.placement !== "post";
+}
+
+function storyMediaType(story: Story) {
+  return story.mediaType ?? "news";
+}
+
+function youtubeEmbedUrl(value?: string) {
+  if (!value) return "";
+  const trimmed = value.trim();
+  const directId = trimmed.match(/^[a-zA-Z0-9_-]{11}$/)?.[0];
+  if (directId) return `https://www.youtube.com/embed/${directId}?playsinline=1&rel=0`;
+
+  try {
+    const url = new URL(trimmed);
+    const shortId = url.hostname.includes("youtu.be") ? url.pathname.split("/").filter(Boolean)[0] : "";
+    const watchId = url.searchParams.get("v") ?? "";
+    const shortsId = url.pathname.includes("/shorts/") ? url.pathname.split("/shorts/")[1]?.split("/")[0] : "";
+    const embedId = url.pathname.includes("/embed/") ? url.pathname.split("/embed/")[1]?.split("/")[0] : "";
+    const id = shortId || watchId || shortsId || embedId;
+    return id ? `https://www.youtube.com/embed/${id}?playsinline=1&rel=0` : "";
+  } catch {
+    return "";
+  }
+}
+
 export default function Home() {
   const [stories, setStories] = useState<Story[]>([]);
   const [popularStories, setPopularStories] = useState<Story[]>([]);
@@ -301,6 +385,9 @@ export default function Home() {
   const [bootLoading, setBootLoading] = useState(true);
   const [asking, setAsking] = useState(false);
   const [live, setLive] = useState(false);
+  const [backdoorOpen, setBackdoorOpen] = useState(false);
+  const [manualDraft, setManualDraft] = useState<ManualDraft>(emptyManualDraft);
+  const [manualStories, setManualStories] = useState<Story[]>([]);
   const summaryAudioRef = useRef<HTMLAudioElement | null>(null);
   const summaryAudioUrlsRef = useRef<Map<string, string>>(new Map());
 
@@ -321,6 +408,35 @@ export default function Home() {
     const interval = window.setInterval(loadNews, 60000);
     return () => window.clearInterval(interval);
   }, []);
+
+  useEffect(() => {
+    try {
+      const saved = window.localStorage.getItem(manualStorageKey);
+      if (saved) setManualStories(JSON.parse(saved));
+    } catch {
+      setManualStories([]);
+    }
+
+    async function loadManualStories() {
+      try {
+        const response = await fetch(`/api/manual?ts=${Date.now()}`, { cache: "no-store" });
+        const data = await response.json();
+        if (Array.isArray(data.stories) && data.configured) setManualStories(data.stories);
+      } catch {
+        // Keep the local browser cache when Supabase is not reachable.
+      }
+    }
+
+    const openFromHash = () => setBackdoorOpen(window.location.hash === "#backdoor");
+    loadManualStories();
+    openFromHash();
+    window.addEventListener("hashchange", openFromHash);
+    return () => window.removeEventListener("hashchange", openFromHash);
+  }, []);
+
+  useEffect(() => {
+    window.localStorage.setItem(manualStorageKey, JSON.stringify(manualStories));
+  }, [manualStories]);
 
   useEffect(() => {
     setQuestion("");
@@ -346,21 +462,24 @@ export default function Home() {
   }, []);
 
   const languageScopedAllStories = useMemo(() => {
-    return stories.filter((story) => languageFilter === "All" || story.language === languageFilter);
-  }, [languageFilter, stories]);
+    return [...manualStories, ...stories].filter((story) => isPostVisible(story) && (languageFilter === "All" || story.language === languageFilter));
+  }, [languageFilter, manualStories, stories]);
+  const languageScopedStoryItems = useMemo(() => {
+    return [...manualStories, ...stories].filter((story) => isStoryVisible(story) && (languageFilter === "All" || story.language === languageFilter));
+  }, [languageFilter, manualStories, stories]);
   const recentStories = useMemo(() => {
     return languageScopedAllStories.filter(isRecentStory);
   }, [languageScopedAllStories]);
   const languageScopedStories = useMemo(() => {
     return recentStories;
   }, [recentStories]);
-  const storyWindowStories = useMemo(() => languageScopedAllStories.filter(isStoryWindowStory), [languageScopedAllStories]);
+  const storyWindowStories = useMemo(() => languageScopedStoryItems.filter(isStoryWindowStory), [languageScopedStoryItems]);
   const categoryWindowStories = useMemo(() => languageScopedAllStories.filter(isCategoryWindowStory), [languageScopedAllStories]);
   const tamilStories = useMemo(() => storyWindowStories.filter((story) => story.language === "Tamil"), [storyWindowStories]);
   const webStories = useMemo(() => {
     const popularSources = ["BBC Tamil", "TamilWin", "Lankasri", "BBC News", "Al Jazeera", "News First"];
     const popular = storyWindowStories.filter((story) => popularSources.includes(story.source) || story.tone === "alert" || isTopWindowStory(story) || isSriLankaStory(story));
-    return (popular.length ? popular : tamilStories.length ? tamilStories : storyWindowStories).slice(0, 100);
+    return (popular.length ? popular : tamilStories.length ? tamilStories : storyWindowStories).slice(0, storyLimit);
   }, [storyWindowStories, tamilStories]);
 
   const filteredStories = useMemo(() => {
@@ -394,7 +513,7 @@ export default function Home() {
     const ranked = languageScopedPopularStories.length ? languageScopedPopularStories : languageScopedStories;
     return ranked.slice(0, 5);
   }, [languageScopedPopularStories, languageScopedStories]);
-  const leadCarouselStories = useMemo(() => diversifyStories(languageScopedStories.filter(isTopWindowStory), 5), [languageScopedStories]);
+  const leadCarouselStories = useMemo(() => diversifyStories(languageScopedStories.filter(isTopWindowStory), 15), [languageScopedStories]);
   const isCategoryFeed = activeNav === "Sri Lanka" || activeNav === "World";
   const topicFilteredStories = useMemo(() => {
     if (isCategoryFeed) return filteredStories;
@@ -472,6 +591,36 @@ export default function Home() {
         ? `${question}\n\nCompare different news platforms and summarize the difference.`
         : question;
     await askPrompt(prompt, story);
+  }
+
+  async function saveManualStory(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!manualDraft.title.trim()) return;
+    try {
+      const response = await fetch("/api/manual", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(manualDraft)
+      });
+
+      if (!response.ok) throw new Error("Supabase save failed");
+      const data = await response.json();
+      if (!data.story) throw new Error("Missing saved story");
+      setManualStories((items) => [data.story, ...items.filter((story) => story.id !== data.story.id)].slice(0, 80));
+      setManualDraft(emptyManualDraft);
+    } catch {
+      setManualStories((items) => [manualStoryFromDraft(manualDraft), ...items].slice(0, 80));
+      setManualDraft(emptyManualDraft);
+    }
+  }
+
+  async function removeManualStory(id: string) {
+    try {
+      await fetch(`/api/manual?id=${encodeURIComponent(id)}`, { method: "DELETE" });
+    } catch {
+      // Local fallback item can still be removed from this browser.
+    }
+    setManualStories((items) => items.filter((story) => story.id !== id));
   }
 
   async function summarizeStory(story: Story) {
@@ -752,7 +901,7 @@ export default function Home() {
       ) : (
         <section className="ai-empty-card">
           <span>Recent intelligence</span>
-          <p>{languageScopedStories.length ? `${languageScopedStories.length} updates from the last 8 hours.` : "Waiting for recent updates."}</p>
+          <p>{languageScopedStories.length ? `${languageScopedStories.length} updates from the last 5 hours.` : "Waiting for recent updates."}</p>
         </section>
       )}
 
@@ -778,7 +927,7 @@ export default function Home() {
   );
 
   return (
-    <main className="site-shell">
+    <main className={`site-shell ${activeNav === "Stories" ? "stories-active" : ""}`}>
       {bootLoading && (
         <div className="site-preloader" role="status" aria-live="polite">
           <div>
@@ -792,7 +941,10 @@ export default function Home() {
         </div>
       )}
       <header className="site-header">
-        <a className="brand logo-brand" href="#top" aria-label="GOjeje home">
+        <a className="brand logo-brand" href="#top" aria-label="GOjeje home" onDoubleClick={(event) => {
+          event.preventDefault();
+          setBackdoorOpen(true);
+        }}>
           <img src="/gojeje.png" alt="GOjeje" />
         </a>
         <form
@@ -892,6 +1044,94 @@ export default function Home() {
         </section>
       )}
 
+      {backdoorOpen && (
+        <section className="modal-backdrop admin-backdrop" role="dialog" aria-modal="true" aria-label="Add manual news">
+          <article className="admin-panel">
+            <button className="close-button" type="button" onClick={() => {
+              setBackdoorOpen(false);
+              if (window.location.hash === "#backdoor") history.replaceState(null, "", window.location.pathname + window.location.search);
+            }} aria-label="Close">×</button>
+            <div className="admin-panel-head">
+              <p className="eyebrow">Backdoor</p>
+              <h2>Add post or story</h2>
+            </div>
+            <form className="admin-form" onSubmit={saveManualStory}>
+              <label>
+                Title
+                <input value={manualDraft.title} onChange={(event) => setManualDraft((draft) => ({ ...draft, title: event.target.value }))} placeholder="News title" required />
+              </label>
+              <label>
+                Summary
+                <textarea value={manualDraft.summary} onChange={(event) => setManualDraft((draft) => ({ ...draft, summary: event.target.value }))} placeholder="Short summary" rows={3} />
+              </label>
+              <div className="admin-grid">
+                <label>
+                  Source
+                  <input value={manualDraft.source} onChange={(event) => setManualDraft((draft) => ({ ...draft, source: event.target.value }))} placeholder="GOjeje" />
+                </label>
+                <label>
+                  Category
+                  <input value={manualDraft.category} onChange={(event) => setManualDraft((draft) => ({ ...draft, category: event.target.value }))} placeholder="Sri Lanka" />
+                </label>
+              </div>
+              <label>
+                Image URL
+                <input value={manualDraft.image} onChange={(event) => setManualDraft((draft) => ({ ...draft, image: event.target.value }))} placeholder="https://..." />
+              </label>
+              <label>
+                Link URL
+                <input value={manualDraft.url} onChange={(event) => setManualDraft((draft) => ({ ...draft, url: event.target.value }))} placeholder="https://..." />
+              </label>
+              <div className="admin-grid">
+                <label>
+                  Language
+                  <select value={manualDraft.language} onChange={(event) => setManualDraft((draft) => ({ ...draft, language: event.target.value as ManualDraft["language"] }))}>
+                    <option value="Tamil">Tamil</option>
+                    <option value="English">English</option>
+                    <option value="Sinhala">Sinhala</option>
+                  </select>
+                </label>
+                <label>
+                  Show in
+                  <select value={manualDraft.placement} onChange={(event) => setManualDraft((draft) => ({ ...draft, placement: event.target.value as ManualDraft["placement"] }))}>
+                    <option value="both">Post + Stories</option>
+                    <option value="post">Post only</option>
+                    <option value="story">Stories only</option>
+                  </select>
+                </label>
+              </div>
+              <label>
+                Story mode
+                <select value={manualDraft.mediaType} onChange={(event) => setManualDraft((draft) => ({ ...draft, mediaType: event.target.value as ManualDraft["mediaType"] }))}>
+                  <option value="news">News style</option>
+                  <option value="image">Full image</option>
+                  <option value="video">Video</option>
+                </select>
+              </label>
+              {manualDraft.mediaType === "video" && (
+                <label>
+                  Video link
+                  <input value={manualDraft.videoUrl} onChange={(event) => setManualDraft((draft) => ({ ...draft, videoUrl: event.target.value }))} placeholder="YouTube link or video ID" />
+                </label>
+              )}
+              <button type="submit">Publish now</button>
+            </form>
+            {manualStories.length > 0 && (
+              <div className="manual-list">
+                <h3>Manual items</h3>
+                {manualStories.slice(0, 8).map((story) => (
+                  <div key={story.id}>
+                    <span>{story.placement === "both" ? "Post + Stories" : story.placement === "story" ? "Stories" : "Post"} · {storyMediaType(story)}</span>
+                    <strong>{story.title}</strong>
+                    <button type="button" onClick={() => removeManualStory(story.id)}>Delete</button>
+                  </div>
+                ))}
+              </div>
+            )}
+          </article>
+        </section>
+      )}
+
       {activeNav === "AI" ? (
         <section className="ai-page">
           {aiPanel}
@@ -908,16 +1148,34 @@ export default function Home() {
         </section>
       ) : activeNav === "Stories" ? (
         <section className="stories-page" id="stories">
-                <div className="story-rail story-rail-large">
+          <div className="tiktok-story-feed">
             {webStories.length ? webStories.map((story, index) => (
-              <button className="web-story-card" type="button" key={story.id} onClick={() => openStory(index)}>
-                <div className={`story-media ${toneClass[story.tone] ?? "tone-city"}`}>
-                  <NewsImage src={story.image} />
-                  <span>{story.source}</span>
-                </div>
-                <h3>{story.title}</h3>
-                <small>{relativeTime(story.publishedAt)} ago</small>
-              </button>
+              <article className={`tiktok-story-card story-kind-${storyMediaType(story)}`} key={story.id}>
+                {storyMediaType(story) === "video" && youtubeEmbedUrl(story.videoUrl || story.url) ? (
+                  <iframe
+                    src={youtubeEmbedUrl(story.videoUrl || story.url)}
+                    title={story.title}
+                    allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share"
+                    allowFullScreen
+                  />
+                ) : (
+                  <button className="tiktok-media-button" type="button" onClick={() => openStory(index)} aria-label={story.title}>
+                    <div className={`story-media ${toneClass[story.tone] ?? "tone-city"}`}>
+                      <NewsImage src={story.image} />
+                    </div>
+                  </button>
+                )}
+                {storyMediaType(story) !== "image" && (
+                  <div className="tiktok-story-copy">
+                    <span>{story.source} · {relativeTime(story.publishedAt)} ago</span>
+                    <h3>{story.title}</h3>
+                    {story.summary ? <p>{shortText(story.summary, 120)}</p> : null}
+                  </div>
+                )}
+                {storyMediaType(story) === "image" && (
+                  <button className="tiktok-open-button" type="button" onClick={() => openStory(index)} aria-label="Open image story">Open</button>
+                )}
+              </article>
             )) : <div className="lead-empty">{loading ? "Loading stories..." : "No recent stories."}</div>}
           </div>
         </section>
@@ -941,19 +1199,6 @@ export default function Home() {
                             <span className="time-chip">{relativeTime(story.publishedAt)} ago</span>
                           </div>
                           <h2>{story.title}</h2>
-                          <div className="card-actions">
-                            <button type="button" onClick={(event) => {
-                              event.stopPropagation();
-                              openSummary(story);
-                            }}>Read</button>
-                            <button type="button" className="summary-action" onClick={(event) => {
-                              event.stopPropagation();
-                              summarizeStory(story);
-                            }}>
-                              <img src="/icons/summary.svg" alt="" aria-hidden="true" />
-                              Summary
-                            </button>
-                          </div>
                         </div>
                       </article>
                     ))}
@@ -1102,37 +1347,48 @@ export default function Home() {
             ))}
           </div>
           <button className="viewer-hit left" type="button" aria-label="Previous story" onClick={() => moveStory("previous")} />
-          <article className={`viewer-card ${activeStory.title.length + activeStory.summary.length > 210 ? "viewer-card-long" : ""}`} onClick={handleStoryViewerTap}>
+          <article className={`viewer-card story-kind-${storyMediaType(activeStory)} ${activeStory.title.length + activeStory.summary.length > 210 ? "viewer-card-long" : ""}`} onClick={handleStoryViewerTap}>
             <div className={`viewer-image ${toneClass[activeStory.tone] ?? "tone-city"}`}>
-              <NewsImage src={activeStory.image} />
+              {storyMediaType(activeStory) === "video" && youtubeEmbedUrl(activeStory.videoUrl || activeStory.url) ? (
+                <iframe
+                  src={youtubeEmbedUrl(activeStory.videoUrl || activeStory.url)}
+                  title={activeStory.title}
+                  allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share"
+                  allowFullScreen
+                />
+              ) : (
+                <NewsImage src={activeStory.image} />
+              )}
             </div>
-            <div className="viewer-copy">
-              <span>{activeStory.source}</span>
-              <h2>{activeStory.title}</h2>
-              <p>{shortText(activeStory.summary, 230)}</p>
-              <div className="viewer-actions">
-                <button type="button" onClick={(event) => openStorySummary(event, activeStory)}>Read</button>
-                <button type="button" className="summary-action" onClick={(event) => {
-                  event.stopPropagation();
-                  summarizeStory(activeStory);
-                }}>
-                  <img src="/icons/summary.svg" alt="" aria-hidden="true" />
-                  Summary
-                </button>
-                <button className="icon-action" type="button" onClick={(event) => {
-                  event.stopPropagation();
-                  shareStoryCard(activeStory);
-                }} aria-label="Share story card" title="Share">
-                  <img src="/icons/share.svg" alt="" aria-hidden="true" />
-                </button>
-                <button className="icon-action" type="button" onClick={(event) => {
-                  event.stopPropagation();
-                  downloadStoryCard(activeStory);
-                }} aria-label="Download story card as JPG" title="Download">
-                  <img src="/icons/download.svg" alt="" aria-hidden="true" />
-                </button>
+            {storyMediaType(activeStory) !== "image" && (
+              <div className="viewer-copy">
+                <span>{activeStory.source}</span>
+                <h2>{activeStory.title}</h2>
+                <p>{shortText(activeStory.summary, 230)}</p>
+                <div className="viewer-actions">
+                  <button type="button" onClick={(event) => openStorySummary(event, activeStory)}>Read</button>
+                  <button type="button" className="summary-action" onClick={(event) => {
+                    event.stopPropagation();
+                    summarizeStory(activeStory);
+                  }}>
+                    <img src="/icons/summary.svg" alt="" aria-hidden="true" />
+                    Summary
+                  </button>
+                  <button className="icon-action" type="button" onClick={(event) => {
+                    event.stopPropagation();
+                    shareStoryCard(activeStory);
+                  }} aria-label="Share story card" title="Share">
+                    <img src="/icons/share.svg" alt="" aria-hidden="true" />
+                  </button>
+                  <button className="icon-action" type="button" onClick={(event) => {
+                    event.stopPropagation();
+                    downloadStoryCard(activeStory);
+                  }} aria-label="Download story card as JPG" title="Download">
+                    <img src="/icons/download.svg" alt="" aria-hidden="true" />
+                  </button>
+                </div>
               </div>
-            </div>
+            )}
           </article>
           <button className="viewer-hit right" type="button" aria-label="Next story" onClick={() => moveStory("next")} />
         </div>
