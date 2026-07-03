@@ -6,6 +6,10 @@ type StoryContext = {
   title?: string;
   source?: string;
   summary?: string;
+  category?: string;
+  language?: string;
+  publishedAt?: string;
+  url?: string;
 };
 
 function fallbackAnswer(question: string, context: string, reason: "missing-key" | "api-error" = "api-error") {
@@ -42,9 +46,20 @@ function outputText(payload: unknown) {
 export async function POST(request: Request) {
   const body = await request.json();
   const question = String(body.question ?? "");
-  const stories: StoryContext[] = Array.isArray(body.stories) ? body.stories.slice(0, 12) : [];
+  const stories: StoryContext[] = Array.isArray(body.stories) ? body.stories.slice(0, 24) : [];
   const context = stories
-    .map((story) => `${story.title ?? ""} | ${story.source ?? ""} | ${story.summary ?? ""}`)
+    .map((story) => {
+      const time = story.publishedAt ? new Date(story.publishedAt).toISOString() : "";
+      return [
+        `Title: ${story.title ?? ""}`,
+        `Source: ${story.source ?? ""}`,
+        `Category: ${story.category ?? ""}`,
+        `Language: ${story.language ?? ""}`,
+        `Published: ${time}`,
+        `Link: ${story.url ?? ""}`,
+        `Summary: ${story.summary ?? ""}`
+      ].join(" | ");
+    })
     .join("\n");
 
   if (!process.env.OPENAI_API_KEY) {
@@ -63,7 +78,7 @@ export async function POST(request: Request) {
         {
           role: "developer",
           content:
-            "You are GOjeje, an AI news assistant for Sri Lankan and world news. Answer in simple Tamil unless the user asks otherwise. Use only the provided news context. Keep summaries easy to read, neutral, and source-aware. If the user asks to compare platforms, group the answer by source and then give a short conclusion."
+            "You are GOjeje, an AI news assistant for Sri Lankan and world news. Answer in simple Tamil unless the user asks otherwise. Use the provided live news context with source, category, published time, and links. Give a clear detailed summary with: what happened, why it matters, source/platform notes, and a short conclusion. If sources differ, compare them by source. Do not invent facts outside the provided context; say when the live feed does not contain enough detail."
         },
         {
           role: "user",

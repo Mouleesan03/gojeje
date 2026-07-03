@@ -22,7 +22,7 @@ const navItems = [
   { id: "Stories", label: "Stories", icon: "/icons/stories.svg" },
   { id: "AI", label: "AI", icon: "/icons/ai.svg" }
 ];
-const quickSearches = ["Sri Lanka", "World", "BBC Tamil", "TamilWin", "Lankasri", "News First"];
+const quickSearches = ["Important", "Sri Lanka", "World", "BBC Tamil", "TamilWin", "Lankasri", "News First"];
 
 const toneClass: Record<string, string> = {
   fuel: "tone-fuel",
@@ -34,7 +34,9 @@ const toneClass: Record<string, string> = {
 
 const importantWindow = 30 * 60 * 1000;
 const oneHourWindow = 60 * 60 * 1000;
-const feedWindow = 2 * oneHourWindow;
+const feedWindow = 8 * oneHourWindow;
+const categoryWindow = 10 * oneHourWindow;
+const storyWindow = 5 * oneHourWindow;
 
 const defaultQuestions: Record<"All" | "Tamil" | "English", string> = {
   All: "Give me the most important news updates from the last 2 hours.",
@@ -70,25 +72,27 @@ function NewsImage({ src }: { src?: string }) {
   return <img src={src} alt="" onError={() => setFailed(true)} />;
 }
 
-function isRecentStory(story: Story) {
+function isWithinWindow(story: Story, windowMs: number) {
   const time = new Date(story.publishedAt).getTime();
   if (Number.isNaN(time)) return false;
   const age = Date.now() - time;
-  return age >= 0 && age <= feedWindow;
+  return age >= 0 && age <= windowMs;
+}
+
+function isRecentStory(story: Story) {
+  return isWithinWindow(story, feedWindow);
 }
 
 function isTopWindowStory(story: Story) {
-  const time = new Date(story.publishedAt).getTime();
-  if (Number.isNaN(time)) return false;
-  const age = Date.now() - time;
-  return age >= 0 && age <= importantWindow;
+  return isWithinWindow(story, importantWindow);
 }
 
-function isOneHourStory(story: Story) {
-  const time = new Date(story.publishedAt).getTime();
-  if (Number.isNaN(time)) return false;
-  const age = Date.now() - time;
-  return age >= 0 && age <= oneHourWindow;
+function isCategoryWindowStory(story: Story) {
+  return isWithinWindow(story, categoryWindow);
+}
+
+function isStoryWindowStory(story: Story) {
+  return isWithinWindow(story, storyWindow);
 }
 
 function isBreakingStory(story: Story) {
@@ -237,6 +241,7 @@ export default function Home() {
   const [answer, setAnswer] = useState("");
   const [searchOpen, setSearchOpen] = useState(false);
   const [latestPage, setLatestPage] = useState(0);
+  const [recentTopic, setRecentTopic] = useState("Important");
   const [selectedAiAnswer, setSelectedAiAnswer] = useState("");
   const [selectedAiLoading, setSelectedAiLoading] = useState(false);
   const [summaryListening, setSummaryListening] = useState(false);
@@ -270,7 +275,7 @@ export default function Home() {
 
   useEffect(() => {
     setLatestPage(0);
-  }, [activeNav, languageFilter, query]);
+  }, [activeNav, languageFilter, query, recentTopic]);
 
   useEffect(() => {
     if (typeof window === "undefined" || !("speechSynthesis" in window)) return;
@@ -286,22 +291,28 @@ export default function Home() {
     };
   }, []);
 
+  const languageScopedAllStories = useMemo(() => {
+    return stories.filter((story) => languageFilter === "All" || story.language === languageFilter);
+  }, [languageFilter, stories]);
   const recentStories = useMemo(() => {
-    return stories.filter(isRecentStory);
-  }, [stories]);
+    return languageScopedAllStories.filter(isRecentStory);
+  }, [languageScopedAllStories]);
   const languageScopedStories = useMemo(() => {
-    return recentStories.filter((story) => languageFilter === "All" || story.language === languageFilter);
-  }, [languageFilter, recentStories]);
-  const tamilStories = useMemo(() => languageScopedStories.filter((story) => story.language === "Tamil"), [languageScopedStories]);
+    return recentStories;
+  }, [recentStories]);
+  const storyWindowStories = useMemo(() => languageScopedAllStories.filter(isStoryWindowStory), [languageScopedAllStories]);
+  const categoryWindowStories = useMemo(() => languageScopedAllStories.filter(isCategoryWindowStory), [languageScopedAllStories]);
+  const tamilStories = useMemo(() => storyWindowStories.filter((story) => story.language === "Tamil"), [storyWindowStories]);
   const webStories = useMemo(() => {
     const popularSources = ["BBC Tamil", "TamilWin", "Lankasri", "BBC News", "Al Jazeera", "News First"];
-    const popular = languageScopedStories.filter((story) => popularSources.includes(story.source) || story.tone === "alert");
-    return (popular.length ? popular : tamilStories.length ? tamilStories : languageScopedStories).slice(0, 100);
-  }, [languageScopedStories, tamilStories]);
+    const popular = storyWindowStories.filter((story) => popularSources.includes(story.source) || story.tone === "alert");
+    return (popular.length ? popular : tamilStories.length ? tamilStories : storyWindowStories).slice(0, 100);
+  }, [storyWindowStories, tamilStories]);
 
   const filteredStories = useMemo(() => {
     const search = query.trim().toLowerCase();
-    return languageScopedStories.filter((story) => {
+    const baseStories = activeNav === "Sri Lanka" || activeNav === "World" ? categoryWindowStories : languageScopedStories;
+    return baseStories.filter((story) => {
       const navMatch =
         activeNav === "Top" ||
         activeNav === "Stories" ||
@@ -309,11 +320,10 @@ export default function Home() {
         (activeNav === "Sri Lanka" && isSriLankaStory(story)) ||
         (activeNav === "World" && isWorldStory(story)) ||
         [story.category, story.source, story.title, story.summary].join(" ").toLowerCase().includes(activeNav.toLowerCase());
-      const navWindowMatch = activeNav === "Sri Lanka" || activeNav === "World" ? isOneHourStory(story) : true;
       const searchMatch = !search || [story.title, story.summary, story.source, story.category, story.language].join(" ").toLowerCase().includes(search);
-      return navMatch && navWindowMatch && searchMatch;
+      return navMatch && searchMatch;
     });
-  }, [activeNav, languageScopedStories, query]);
+  }, [activeNav, categoryWindowStories, languageScopedStories, query]);
 
   const searchResults = useMemo(() => {
     const search = query.trim().toLowerCase();
@@ -330,8 +340,16 @@ export default function Home() {
     const ranked = languageScopedPopularStories.length ? languageScopedPopularStories : languageScopedStories;
     return ranked.slice(0, 5);
   }, [languageScopedPopularStories, languageScopedStories]);
+  const leadCarouselStories = useMemo(() => diversifyStories(languageScopedStories.filter(isTopWindowStory), 5), [languageScopedStories]);
   const isCategoryFeed = activeNav === "Sri Lanka" || activeNav === "World";
-  const latestStories = filteredStories.filter((story) => !popularCarouselStories.some((popularStory) => popularStory.id === story.id)).slice(0, 100);
+  const topicFilteredStories = useMemo(() => {
+    if (isCategoryFeed) return filteredStories;
+    if (recentTopic === "Important") return filteredStories.filter((story) => story.tone === "alert" || isTopWindowStory(story) || isSriLankaStory(story)).slice(0, 100);
+    if (recentTopic === "Sri Lanka") return filteredStories.filter(isSriLankaStory);
+    if (recentTopic === "World") return filteredStories.filter(isWorldStory);
+    return filteredStories.filter((story) => [story.source, story.category, story.title, story.summary].join(" ").toLowerCase().includes(recentTopic.toLowerCase()));
+  }, [filteredStories, isCategoryFeed, recentTopic]);
+  const latestStories = topicFilteredStories.filter((story) => !leadCarouselStories.some((leadStory) => leadStory.id === story.id)).slice(0, 100);
   const feedStories = isCategoryFeed ? filteredStories.slice(0, 100) : latestStories;
   const latestPageSize = 15;
   const latestPageCount = Math.max(1, Math.ceil(feedStories.length / latestPageSize));
@@ -431,7 +449,7 @@ export default function Home() {
     window.speechSynthesis.cancel();
     const utterance = new SpeechSynthesisUtterance(selectedAiAnswer);
     utterance.lang = selectedStory?.language === "Tamil" ? "ta-LK" : "en-US";
-    utterance.rate = 0.92;
+    utterance.rate = selectedStory?.language === "Tamil" ? 0.78 : 0.84;
     utterance.pitch = 1;
     utterance.onend = () => setSummaryListening(false);
     utterance.onerror = () => setSummaryListening(false);
@@ -718,12 +736,12 @@ export default function Home() {
       {searchOpen && query.trim() && (
         <section className="search-overlay" aria-label="Search results">
           <div className="search-panel">
+            <button className="search-close" type="button" onClick={() => setSearchOpen(false)} aria-label="Close search">×</button>
             <div className="section-heading">
               <div>
                 <p className="eyebrow">AI search</p>
                 <h2>{searchResults.length} results</h2>
               </div>
-              <button type="button" onClick={() => setSearchOpen(false)}>Close</button>
             </div>
             <form
               className="search-panel-search"
@@ -789,36 +807,10 @@ export default function Home() {
         <>
           {!isCategoryFeed && (
             <>
-              <section className="hero-grid news-home-grid" id="top">
-                <section className="top-five-panel">
-                  <div className="panel-header important-panel-header">
-                    <h1>Important News</h1>
-                    <b><i /> {live ? "Live · 1 min" : "Connecting"}</b>
-                  </div>
-                  <div className="top-five-list">
-                    {importantStories.length ? importantStories.map((story) => (
-                      <button type="button" key={story.id} onClick={() => openSummary(story)}>
-                        <div className={`important-thumb ${toneClass[story.tone] ?? "tone-city"}`}>
-                          <NewsImage src={story.image} />
-                        </div>
-                        <div className="important-story-copy">
-                          <span>{story.source} · {story.category} · {relativeTime(story.publishedAt)} ago</span>
-                          <strong>{story.title}</strong>
-                        </div>
-                      </button>
-                    )) : <p>{loading ? "Loading recent news..." : "No important news posted in the last 30 minutes."}</p>}
-                  </div>
-                </section>
-              </section>
-
-              <section className="news-layout go-news-layout">
-                <div className="go-news-heading">
-                  <h2>Popular News</h2>
-                  <span />
-                </div>
-                {popularCarouselStories.length ? (
+              <section className="news-layout go-news-layout" id="top">
+                {leadCarouselStories.length ? (
                   <div className="popular-carousel">
-                    {popularCarouselStories.map((story) => (
+                    {leadCarouselStories.map((story) => (
                       <article className="lead-card popular-lead-card" key={story.id} onClick={() => openSummary(story)}>
                         <div className={`lead-image ${toneClass[story.tone] ?? "tone-city"}`}>
                           <NewsImage src={story.image} />
@@ -857,17 +849,12 @@ export default function Home() {
           )}
 
           <section className="content-section">
-            <div className="section-heading">
-              <div>
-                <h2>{isCategoryFeed ? `${activeNav} News` : "Recent Feed"}</h2>
-              </div>
+            <div className="section-heading feed-heading">
+              <h2>{isCategoryFeed ? `${activeNav} News` : "Recent Feed"}</h2>
               {!isCategoryFeed && (
                 <div className="quick-chips">
                   {quickSearches.map((chip) => (
-                    <button type="button" key={chip} onClick={() => {
-                      setQuery(chip);
-                      setSearchOpen(true);
-                    }}>{chip}</button>
+                    <button type="button" key={chip} className={recentTopic === chip ? "active" : ""} onClick={() => setRecentTopic(chip)}>{chip}</button>
                   ))}
                 </div>
               )}
@@ -920,10 +907,10 @@ export default function Home() {
             <div className={`modal-image ${toneClass[selectedStory.tone] ?? "tone-city"}`}>
               <NewsImage src={selectedStory.image} />
             </div>
-            <span className="badge">{selectedStory.category}</span>
             <h2>{selectedStory.title}</h2>
             <p>{shortText(selectedStory.summary, 420)}</p>
             <div className="meta-row">
+              <span className="badge">{selectedStory.category}</span>
               <span className="source-chip">{selectedStory.source}</span>
               <span className="language-chip">{selectedStory.language}</span>
               <span className="time-chip">{relativeTime(selectedStory.publishedAt)} ago</span>
@@ -995,7 +982,7 @@ export default function Home() {
             ))}
           </div>
           <button className="viewer-hit left" type="button" aria-label="Previous story" onClick={() => moveStory("previous")} />
-          <article className="viewer-card" onClick={handleStoryViewerTap}>
+          <article className={`viewer-card ${activeStory.title.length + activeStory.summary.length > 210 ? "viewer-card-long" : ""}`} onClick={handleStoryViewerTap}>
             <div className={`viewer-image ${toneClass[activeStory.tone] ?? "tone-city"}`}>
               <NewsImage src={activeStory.image} />
             </div>
