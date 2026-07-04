@@ -53,7 +53,7 @@ type UpdateNotice = {
   stories: number;
 };
 
-type ThemePreference = "system" | "light" | "dark";
+type ThemePreference = "light" | "dark";
 type ResolvedTheme = "light" | "dark";
 
 const navItems = [
@@ -65,10 +65,10 @@ const navItems = [
 ];
 const quickSearches = [
   { id: "Latest", label: "Latest" },
+  { id: "World Cup Scores", label: "Scores" },
   { id: "Must Know", label: "Must" },
   { id: "Sri Lanka", label: "Lanka" },
   { id: "World", label: "World" },
-  { id: "World Cup Scores", label: "Scores" },
   { id: "BBC Tamil", label: "BBC Tamil" },
   { id: "TamilWin", label: "TamilWin" },
   { id: "Lankasri", label: "Lankasri" },
@@ -82,6 +82,33 @@ const toneClass: Record<string, string> = {
   market: "tone-market",
   alert: "tone-alert",
   city: "tone-city"
+};
+
+const teamFlags: Record<string, string> = {
+  Argentina: "🇦🇷",
+  Australia: "🇦🇺",
+  Belgium: "🇧🇪",
+  Brazil: "🇧🇷",
+  Canada: "🇨🇦",
+  Chile: "🇨🇱",
+  Colombia: "🇨🇴",
+  Croatia: "🇭🇷",
+  Denmark: "🇩🇰",
+  Ecuador: "🇪🇨",
+  England: "🏴",
+  France: "🇫🇷",
+  Germany: "🇩🇪",
+  Ghana: "🇬🇭",
+  Italy: "🇮🇹",
+  Japan: "🇯🇵",
+  Morocco: "🇲🇦",
+  Netherlands: "🇳🇱",
+  Paraguay: "🇵🇾",
+  Portugal: "🇵🇹",
+  Spain: "🇪🇸",
+  Switzerland: "🇨🇭",
+  "United States": "🇺🇸",
+  Uruguay: "🇺🇾"
 };
 
 const thirtyMinuteWindow = 30 * 60 * 1000;
@@ -242,6 +269,39 @@ function relatedScore(base: Story, candidate: Story) {
   const categoryScore = base.category === candidate.category ? 0.2 : 0;
   const languageScore = base.language === candidate.language ? 0.1 : 0;
   return Math.min(1, wordScore * 0.65 + sourceScore + categoryScore + languageScore);
+}
+
+function rankedSearchStories(items: Story[], searchValue: string) {
+  const terms = searchValue
+    .trim()
+    .toLowerCase()
+    .replace(/[^\p{L}\p{N}\s]+/gu, " ")
+    .split(/\s+/)
+    .filter(Boolean);
+
+  if (!terms.length) return [];
+
+  return items
+    .map((story) => {
+      const title = story.title.toLowerCase();
+      const summary = story.summary.toLowerCase();
+      const source = story.source.toLowerCase();
+      const category = story.category.toLowerCase();
+      const language = story.language.toLowerCase();
+      const combined = `${title} ${summary} ${source} ${category} ${language}`;
+      const score = terms.reduce((total, term) => {
+        if (title.includes(term)) return total + 6;
+        if (source.includes(term)) return total + 4;
+        if (category.includes(term)) return total + 3;
+        if (summary.includes(term)) return total + 2;
+        if (combined.includes(term)) return total + 1;
+        return total;
+      }, 0);
+      return { story, score };
+    })
+    .filter((item) => item.score > 0)
+    .sort((a, b) => b.score - a.score || new Date(b.story.publishedAt).getTime() - new Date(a.story.publishedAt).getTime())
+    .map((item) => item.story);
 }
 
 function cleanAiLine(line: string) {
@@ -426,6 +486,7 @@ export default function Home() {
   const [compareMode, setCompareMode] = useState(false);
   const [answer, setAnswer] = useState("");
   const [searchOpen, setSearchOpen] = useState(false);
+  const [searchSourceFilter, setSearchSourceFilter] = useState("All");
   const [latestPage, setLatestPage] = useState(0);
   const [recentTopic, setRecentTopic] = useState("Latest");
   const [selectedAiAnswer, setSelectedAiAnswer] = useState("");
@@ -453,7 +514,7 @@ export default function Home() {
   const [scoreAiLoading, setScoreAiLoading] = useState(false);
   const [scoreAiAnswer, setScoreAiAnswer] = useState("");
   const [updateNotice, setUpdateNotice] = useState<UpdateNotice | null>(null);
-  const [themePreference, setThemePreference] = useState<ThemePreference>("system");
+  const [themePreference, setThemePreference] = useState<ThemePreference>("light");
   const [resolvedTheme, setResolvedTheme] = useState<ResolvedTheme>("light");
   const summaryAudioRef = useRef<HTMLAudioElement | null>(null);
   const summaryAudioUrlsRef = useRef<Map<string, string>>(new Map());
@@ -466,22 +527,15 @@ export default function Home() {
 
   useEffect(() => {
     const stored = window.localStorage.getItem(themeStorageKey) as ThemePreference | null;
-    if (stored === "light" || stored === "dark" || stored === "system") setThemePreference(stored);
+    if (stored === "light" || stored === "dark") setThemePreference(stored);
+    else window.localStorage.setItem(themeStorageKey, "light");
   }, []);
 
   useEffect(() => {
-    const mediaQuery = window.matchMedia("(prefers-color-scheme: dark)");
-    const applyTheme = () => {
-      const nextTheme = themePreference === "system" ? (mediaQuery.matches ? "dark" : "light") : themePreference;
-      setResolvedTheme(nextTheme);
-      document.documentElement.dataset.theme = nextTheme;
-      document.documentElement.style.colorScheme = nextTheme;
-      window.localStorage.setItem(themeStorageKey, themePreference);
-    };
-
-    applyTheme();
-    mediaQuery.addEventListener("change", applyTheme);
-    return () => mediaQuery.removeEventListener("change", applyTheme);
+    setResolvedTheme(themePreference);
+    document.documentElement.dataset.theme = themePreference;
+    document.documentElement.style.colorScheme = themePreference;
+    window.localStorage.setItem(themeStorageKey, themePreference);
   }, [themePreference]);
 
   useEffect(() => {
@@ -624,6 +678,9 @@ export default function Home() {
   const languageScopedAllStories = useMemo(() => {
     return [...manualStories, ...stories].filter((story) => isPostVisible(story) && (languageFilter === "All" || story.language === languageFilter));
   }, [languageFilter, manualStories, stories]);
+  const allSearchStories = useMemo(() => {
+    return [...manualStories, ...stories].filter(isPostVisible);
+  }, [manualStories, stories]);
   const languageScopedStoryItems = useMemo(() => {
     return [...manualStories, ...stories].filter((story) => isStoryVisible(story) && (languageFilter === "All" || story.language === languageFilter));
   }, [languageFilter, manualStories, stories]);
@@ -683,12 +740,19 @@ export default function Home() {
   }, [activeNav, categoryWindowStories, languageScopedStories, query]);
 
   const searchResults = useMemo(() => {
-    const search = query.trim().toLowerCase();
-    if (!search) return [];
-    return languageScopedStories
-      .filter((story) => [story.title, story.summary, story.source, story.category, story.language].join(" ").toLowerCase().includes(search))
+    const ranked = rankedSearchStories(allSearchStories, query);
+    return ranked
+      .filter((story) => searchSourceFilter === "All" || story.source === searchSourceFilter)
       .slice(0, 24);
-  }, [languageScopedStories, query]);
+  }, [allSearchStories, query, searchSourceFilter]);
+  const searchSourceOptions = useMemo(() => {
+    return ["All", ...new Set(rankedSearchStories(allSearchStories, query).map((story) => story.source))].slice(0, 7);
+  }, [allSearchStories, query]);
+  const searchBestMatch = searchResults[0] ?? rankedSearchStories(allSearchStories, query)[0] ?? null;
+
+  useEffect(() => {
+    if (!searchSourceOptions.includes(searchSourceFilter)) setSearchSourceFilter("All");
+  }, [searchSourceFilter, searchSourceOptions]);
 
   const languageScopedPopularStories = useMemo(() => {
     return popularStories.filter((story) => languageFilter === "All" || story.language === languageFilter);
@@ -750,7 +814,7 @@ export default function Home() {
       .sort((a, b) => b.score - a.score)[0];
     return best && best.score >= 0.8 ? [best.story] : [];
   }, [languageScopedStories, selectedStory]);
-  async function askPrompt(prompt: string, story?: Story) {
+  async function askPrompt(prompt: string, story?: Story, contextStories = languageScopedStories) {
     if (!prompt.trim()) return;
     setAsking(true);
     setAnswer("");
@@ -759,13 +823,38 @@ export default function Home() {
       const response = await fetch("/api/ask", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ question: prompt, stories: story ? [story, ...languageScopedStories] : languageScopedStories })
+        body: JSON.stringify({ question: prompt, stories: story ? [story, ...contextStories] : contextStories })
       });
       const data = await response.json();
       setAnswer(data.answer ?? "GOjeje AI இப்போது பதில் தர முடியவில்லை.");
     } finally {
       setAsking(false);
     }
+  }
+
+  async function askSearchPrompt() {
+    const search = query.trim();
+    if (!search) return;
+    let contextStories = searchResults.length ? searchResults : rankedSearchStories(allSearchStories, search).slice(0, 12);
+
+    if (!contextStories.length) {
+      try {
+        const response = await fetch("/api/news", { cache: "no-store" });
+        const data = await response.json();
+        const freshStories = [...manualStories, ...((data.stories ?? []) as Story[])].filter(isPostVisible);
+        contextStories = rankedSearchStories(freshStories, search).slice(0, 12);
+        if ((data.stories ?? []).length) setStories(data.stories);
+        if ((data.popularStories ?? []).length) setPopularStories(data.popularStories);
+      } catch {
+        contextStories = [];
+      }
+    }
+
+    const prompt = `Act like a news search engine. The user searched: "${search}". Check the provided news from all sources. Find the most correct matching news, not unrelated news. Reply with: 1. "Do you mean this?" 2. the best news title 3. source name 4. source link 5. a short summary 6. one helpful follow-up question. If there is no exact match, say it is the closest match.`;
+    setQuestion(search);
+    setSearchOpen(false);
+    setActiveNav("AI");
+    await askPrompt(prompt, undefined, contextStories.length ? contextStories : allSearchStories);
   }
 
   async function askA7(event?: FormEvent<HTMLFormElement>, story?: Story) {
@@ -1161,7 +1250,12 @@ export default function Home() {
         <b><i /> {live ? "Live · 1 min" : "Connecting"}</b>
       </div>
       <h1>Ask the news</h1>
-      <p className="ai-intro">Search across platforms, compare sources, and get a simple answer.</p>
+      <p className="ai-intro">Search news, compare sources, summarize stories, and ask follow-up questions in one place.</p>
+      <div className="ai-capability-row" aria-label="AI capabilities">
+        <span>Search</span>
+        <span>Summarize</span>
+        <span>Compare</span>
+      </div>
 
       {!answer && !asking && (
         <div className="ai-suggestions ai-news-suggestions" aria-label="Important news prompts">
@@ -1198,6 +1292,9 @@ export default function Home() {
           {visibleAnswerLines.map((line, index) => (
             <p key={`${line}-${index}`}>{line}</p>
           ))}
+          {answerLeadStory?.url && answerLeadStory.url !== "#" && (
+            <a className="ai-source-link" href={answerLeadStory.url} target="_blank" rel="noreferrer">Open source</a>
+          )}
         </section>
       ) : (
         <section className="ai-empty-card">
@@ -1217,7 +1314,7 @@ export default function Home() {
         <textarea
           value={question}
           onChange={(event) => setQuestion(event.target.value)}
-          placeholder={defaultQuestions[languageFilter]}
+          placeholder={`Ask anything about the news... ${defaultQuestions[languageFilter]}`}
           rows={2}
         />
         <button type="submit" disabled={asking} aria-label="Ask GOjeje AI">
@@ -1293,7 +1390,7 @@ export default function Home() {
           className="theme-toggle"
           type="button"
           onClick={() => setThemePreference(resolvedTheme === "dark" ? "light" : "dark")}
-          title={`Theme: ${themePreference === "system" ? "Auto" : themePreference}`}
+          title={`Theme: ${themePreference}`}
           aria-label="Toggle dark mode"
         >
           {resolvedTheme === "dark" ? "☀" : "☾"}
@@ -1340,18 +1437,45 @@ export default function Home() {
               className="search-panel-search"
               onSubmit={async (event) => {
                 event.preventDefault();
-                const prompt = query.trim();
-                if (!prompt) return;
-                setQuestion(prompt);
-                setSearchOpen(false);
-                setActiveNav("AI");
-                await askPrompt(prompt);
+                await askSearchPrompt();
               }}
             >
               <span>⌕</span>
               <input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search all news platforms" />
-              <button type="submit">Ask AI</button>
+              <button type="submit" disabled={asking}>{asking ? "Asking" : "Ask AI"}</button>
             </form>
+            {searchSourceOptions.length > 1 && (
+              <div className="search-filter-row" aria-label="Filter by source">
+                {searchSourceOptions.map((source) => (
+                  <button
+                    className={searchSourceFilter === source ? "active" : ""}
+                    type="button"
+                    key={source}
+                    onClick={() => setSearchSourceFilter(source)}
+                  >
+                    {source}
+                  </button>
+                ))}
+              </div>
+            )}
+            {searchBestMatch && (
+              <article className="search-best-card">
+                <span>Do you mean this?</span>
+                <strong>{searchBestMatch.title}</strong>
+                <p>{shortText(searchBestMatch.summary, 145)}</p>
+                <div>
+                  <button type="button" onClick={() => {
+                    setSearchOpen(false);
+                    openSummary(searchBestMatch);
+                  }}>
+                    Summary
+                  </button>
+                  {searchBestMatch.url && searchBestMatch.url !== "#" && (
+                    <a href={searchBestMatch.url} target="_blank" rel="noreferrer">Source link</a>
+                  )}
+                </div>
+              </article>
+            )}
             <div className="search-result-list">
               {searchResults.length ? searchResults.map((story) => (
                 <button type="button" key={story.id} onClick={() => {
@@ -1361,7 +1485,7 @@ export default function Home() {
                   <span>{story.source} · {story.category} · {relativeTime(story.publishedAt)} ago</span>
                   {story.title}
                 </button>
-              )) : <p>No recent results. Try another keyword or source name.</p>}
+              )) : <p>No direct title match. Ask AI can still check every loaded source and return the closest news, source link, and summary.</p>}
             </div>
           </div>
         </section>
@@ -1652,6 +1776,7 @@ export default function Home() {
                     <button
                       type="button"
                       key={chip.id}
+                      data-chip={chip.id}
                       className={recentTopic === chip.id ? "active" : ""}
                       onClick={() => setRecentTopic(chip.id)}
                     >
@@ -1708,11 +1833,11 @@ export default function Home() {
                         <b>{match.status}</b>
                       </div>
                       <div className="score-teams">
-                        <span>{match.home.name}</span>
+                        <span><i aria-hidden="true">{teamFlags[match.home.name] ?? "🏳"}</i>{match.home.name}</span>
                         <strong>{match.home.score || "-"}</strong>
                       </div>
                       <div className="score-teams">
-                        <span>{match.away.name}</span>
+                        <span><i aria-hidden="true">{teamFlags[match.away.name] ?? "🏳"}</i>{match.away.name}</span>
                         <strong>{match.away.score || "-"}</strong>
                       </div>
                     </article>
