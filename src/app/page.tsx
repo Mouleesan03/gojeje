@@ -53,6 +53,9 @@ type UpdateNotice = {
   stories: number;
 };
 
+type ThemePreference = "system" | "light" | "dark";
+type ResolvedTheme = "light" | "dark";
+
 const navItems = [
   { id: "Top", label: "Home", icon: "/icons/home.svg" },
   { id: "Sri Lanka", label: "Lanka", icon: "/icons/news.svg" },
@@ -90,6 +93,7 @@ const storyWindow = 2 * oneHourWindow;
 const storyLimit = 35;
 const manualStorageKey = "gojeje-manual-stories";
 const savedStoriesStorageKey = "gojeje-saved-stories";
+const themeStorageKey = "gojeje-theme";
 
 const emptyManualDraft: ManualDraft = {
   title: "",
@@ -135,8 +139,9 @@ function shortText(text: string, length = 150) {
   return text.length > length ? `${text.slice(0, length)}...` : text;
 }
 
-function NewsImage({ src }: { src?: string }) {
+function NewsImage({ src, priority = false }: { src?: string; priority?: boolean }) {
   const [failed, setFailed] = useState(false);
+  const [loaded, setLoaded] = useState(false);
 
   if (!src || failed) {
     return (
@@ -145,7 +150,18 @@ function NewsImage({ src }: { src?: string }) {
       </div>
     );
   }
-  return <img src={src} alt="" onError={() => setFailed(true)} />;
+  return (
+    <img
+      className={loaded ? "loaded" : ""}
+      src={src}
+      alt=""
+      loading={priority ? "eager" : "lazy"}
+      decoding="async"
+      fetchPriority={priority ? "high" : "auto"}
+      onLoad={() => setLoaded(true)}
+      onError={() => setFailed(true)}
+    />
+  );
 }
 
 function isWithinWindow(story: Story, windowMs: number) {
@@ -437,11 +453,36 @@ export default function Home() {
   const [scoreAiLoading, setScoreAiLoading] = useState(false);
   const [scoreAiAnswer, setScoreAiAnswer] = useState("");
   const [updateNotice, setUpdateNotice] = useState<UpdateNotice | null>(null);
+  const [themePreference, setThemePreference] = useState<ThemePreference>("system");
+  const [resolvedTheme, setResolvedTheme] = useState<ResolvedTheme>("light");
   const summaryAudioRef = useRef<HTMLAudioElement | null>(null);
   const summaryAudioUrlsRef = useRef<Map<string, string>>(new Map());
   const knownStoryIdsRef = useRef<Set<string>>(new Set());
   const newsLoadedRef = useRef(false);
   const updateNoticeTimerRef = useRef<number | null>(null);
+  const leadCarouselRef = useRef<HTMLDivElement | null>(null);
+  const leadTouchStartXRef = useRef(0);
+  const leadStartIndexRef = useRef(0);
+
+  useEffect(() => {
+    const stored = window.localStorage.getItem(themeStorageKey) as ThemePreference | null;
+    if (stored === "light" || stored === "dark" || stored === "system") setThemePreference(stored);
+  }, []);
+
+  useEffect(() => {
+    const mediaQuery = window.matchMedia("(prefers-color-scheme: dark)");
+    const applyTheme = () => {
+      const nextTheme = themePreference === "system" ? (mediaQuery.matches ? "dark" : "light") : themePreference;
+      setResolvedTheme(nextTheme);
+      document.documentElement.dataset.theme = nextTheme;
+      document.documentElement.style.colorScheme = nextTheme;
+      window.localStorage.setItem(themeStorageKey, themePreference);
+    };
+
+    applyTheme();
+    mediaQuery.addEventListener("change", applyTheme);
+    return () => mediaQuery.removeEventListener("change", applyTheme);
+  }, [themePreference]);
 
   useEffect(() => {
     async function loadNews() {
@@ -956,10 +997,8 @@ export default function Home() {
 
   function updateNoticeLabel() {
     if (!updateNotice) return "";
-    const parts = [];
-    if (updateNotice.news) parts.push(`${updateNotice.news} new news`);
-    if (updateNotice.stories) parts.push(`${updateNotice.stories} new ${updateNotice.stories === 1 ? "story" : "stories"}`);
-    return parts.join(" · ");
+    const total = updateNotice.news + updateNotice.stories;
+    return `${total} new ${total === 1 ? "post" : "posts"}`;
   }
 
   function openNewUpdates() {
@@ -985,6 +1024,26 @@ export default function Home() {
     setSelectedAiAnswer("");
     setSelectedAiLoading(false);
     setStoryIndex(null);
+  }
+
+  function nearestLeadIndex() {
+    const carousel = leadCarouselRef.current;
+    if (!carousel) return 0;
+    const cards = Array.from(carousel.querySelectorAll<HTMLElement>(".popular-lead-card"));
+    if (!cards.length) return 0;
+    return cards.reduce((nearest, card, index) => {
+      const currentDistance = Math.abs(card.offsetLeft - carousel.scrollLeft);
+      const nearestDistance = Math.abs(cards[nearest].offsetLeft - carousel.scrollLeft);
+      return currentDistance < nearestDistance ? index : nearest;
+    }, 0);
+  }
+
+  function scrollLeadTo(index: number) {
+    const carousel = leadCarouselRef.current;
+    if (!carousel) return;
+    const cards = Array.from(carousel.querySelectorAll<HTMLElement>(".popular-lead-card"));
+    const target = cards[Math.max(0, Math.min(index, cards.length - 1))];
+    if (target) carousel.scrollTo({ left: target.offsetLeft, behavior: "smooth" });
   }
 
   async function createStoryCard(story: Story) {
@@ -1169,11 +1228,11 @@ export default function Home() {
   );
 
   return (
-    <main className={`site-shell ${activeNav === "Stories" ? "stories-active" : ""}`}>
+    <main className={`site-shell ${activeNav === "Stories" ? "stories-active" : ""}`} data-theme={resolvedTheme}>
       {bootLoading && (
         <div className="site-preloader" role="status" aria-live="polite">
           <div className="news-pulse-loader">
-            <img src="/gojeje.png" alt="GOjeje" />
+            <img src={resolvedTheme === "dark" ? "/gojeje-dark.png" : "/gojeje.png"} alt="GOjeje" />
             <p><i /></p>
             <div className="loader-lines" aria-hidden="true">
               <span />
@@ -1188,7 +1247,7 @@ export default function Home() {
           event.preventDefault();
           setBackdoorOpen(true);
         }}>
-          <img src="/gojeje.png" alt="GOjeje" />
+          <img src={resolvedTheme === "dark" ? "/gojeje-dark.png" : "/gojeje.png"} alt="GOjeje" />
         </a>
         <form
           className="header-search"
@@ -1230,6 +1289,15 @@ export default function Home() {
             <option value="English">English only</option>
           </select>
         </label>
+        <button
+          className="theme-toggle"
+          type="button"
+          onClick={() => setThemePreference(resolvedTheme === "dark" ? "light" : "dark")}
+          title={`Theme: ${themePreference === "system" ? "Auto" : themePreference}`}
+          aria-label="Toggle dark mode"
+        >
+          {resolvedTheme === "dark" ? "☀" : "☾"}
+        </button>
       </header>
 
       {updateNotice && (
@@ -1528,11 +1596,27 @@ export default function Home() {
             <>
               <section className="news-layout go-news-layout" id="top">
                 {leadCarouselStories.length ? (
-                  <div className="popular-carousel">
-                    {leadCarouselStories.map((story) => (
+                  <div
+                    className="popular-carousel"
+                    ref={leadCarouselRef}
+                    onTouchStart={(event) => {
+                      leadTouchStartXRef.current = event.touches[0]?.clientX ?? 0;
+                      leadStartIndexRef.current = nearestLeadIndex();
+                    }}
+                    onTouchEnd={(event) => {
+                      const endX = event.changedTouches[0]?.clientX ?? leadTouchStartXRef.current;
+                      const delta = leadTouchStartXRef.current - endX;
+                      if (Math.abs(delta) < 34) {
+                        scrollLeadTo(leadStartIndexRef.current);
+                        return;
+                      }
+                      scrollLeadTo(leadStartIndexRef.current + (delta > 0 ? 1 : -1));
+                    }}
+                  >
+                    {leadCarouselStories.map((story, index) => (
                       <article className="lead-card popular-lead-card" key={story.id} onClick={() => openSummary(story)}>
                         <div className={`lead-image ${toneClass[story.tone] ?? "tone-city"}`}>
-                          <NewsImage src={story.image} />
+                          <NewsImage src={story.image} priority={index === 0} />
                         </div>
                         <div className="lead-body">
                           <div className="meta-row">
@@ -1686,12 +1770,19 @@ export default function Home() {
         </>
       )}
 
+      {activeNav !== "Stories" && (
+        <footer className="site-footer">
+          <span>GOjeje v1.1</span>
+          <a href="/terms">Terms & Conditions</a>
+        </footer>
+      )}
+
       <nav className={`mobile-glass-nav ${bottomNavCompact ? "compact" : ""}`} aria-label="Mobile sections">
         {navItems.map((item) => (
           <button
             key={item.id}
             type="button"
-            className={`${activeNav === item.id ? "active" : ""} ${((item.id === "Top" && updateNotice?.news) || (item.id === "Stories" && updateNotice?.stories)) ? "has-update" : ""}`}
+            className={activeNav === item.id ? "active" : ""}
             onClick={() => chooseNav(item.id)}
           >
             <img src={item.icon} alt="" aria-hidden="true" />
