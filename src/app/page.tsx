@@ -48,6 +48,11 @@ type ScoreMatch = {
   };
 };
 
+type UpdateNotice = {
+  news: number;
+  stories: number;
+};
+
 const navItems = [
   { id: "Top", label: "Home", icon: "/icons/home.svg" },
   { id: "Sri Lanka", label: "Lanka", icon: "/icons/news.svg" },
@@ -431,15 +436,39 @@ export default function Home() {
   const [scoresError, setScoresError] = useState("");
   const [scoreAiLoading, setScoreAiLoading] = useState(false);
   const [scoreAiAnswer, setScoreAiAnswer] = useState("");
+  const [updateNotice, setUpdateNotice] = useState<UpdateNotice | null>(null);
   const summaryAudioRef = useRef<HTMLAudioElement | null>(null);
   const summaryAudioUrlsRef = useRef<Map<string, string>>(new Map());
+  const knownStoryIdsRef = useRef<Set<string>>(new Set());
+  const newsLoadedRef = useRef(false);
+  const updateNoticeTimerRef = useRef<number | null>(null);
 
   useEffect(() => {
     async function loadNews() {
       try {
         const response = await fetch(`/api/news?ts=${Date.now()}`, { cache: "no-store" });
         const data = await response.json();
-        setStories(data.stories ?? []);
+        const incomingStories: Story[] = data.stories ?? [];
+        const incomingIds = new Set(incomingStories.map((story) => story.id));
+
+        if (newsLoadedRef.current) {
+          const newItems = incomingStories.filter((story) => !knownStoryIdsRef.current.has(story.id));
+          const notice = {
+            news: newItems.filter(isPostVisible).length,
+            stories: newItems.filter(isStoryVisible).length
+          };
+
+          if (notice.news || notice.stories) {
+            setUpdateNotice(notice);
+            if (updateNoticeTimerRef.current) window.clearTimeout(updateNoticeTimerRef.current);
+            updateNoticeTimerRef.current = window.setTimeout(() => setUpdateNotice(null), 8000);
+          }
+        } else {
+          newsLoadedRef.current = true;
+        }
+
+        knownStoryIdsRef.current = incomingIds;
+        setStories(incomingStories);
         setPopularStories(data.popularStories ?? []);
         setLive(Boolean(data.live));
       } finally {
@@ -449,7 +478,10 @@ export default function Home() {
     }
     loadNews();
     const interval = window.setInterval(loadNews, 60000);
-    return () => window.clearInterval(interval);
+    return () => {
+      window.clearInterval(interval);
+      if (updateNoticeTimerRef.current) window.clearTimeout(updateNoticeTimerRef.current);
+    };
   }, []);
 
   useEffect(() => {
@@ -922,6 +954,24 @@ export default function Home() {
     window.scrollTo({ top: 0, behavior: "smooth" });
   }
 
+  function updateNoticeLabel() {
+    if (!updateNotice) return "";
+    const parts = [];
+    if (updateNotice.news) parts.push(`${updateNotice.news} new news`);
+    if (updateNotice.stories) parts.push(`${updateNotice.stories} new ${updateNotice.stories === 1 ? "story" : "stories"}`);
+    return parts.join(" · ");
+  }
+
+  function openNewUpdates() {
+    if (updateNoticeTimerRef.current) window.clearTimeout(updateNoticeTimerRef.current);
+    setUpdateNotice(null);
+    if (updateNotice?.stories && activeNav === "Stories") {
+      document.querySelector(".tiktok-story-feed")?.scrollTo({ top: 0, behavior: "smooth" });
+      return;
+    }
+    window.scrollTo({ top: 0, behavior: "smooth" });
+  }
+
   function openSummary(story: Story) {
     setStoryIndex(null);
     setSelectedStory(story);
@@ -1181,6 +1231,18 @@ export default function Home() {
           </select>
         </label>
       </header>
+
+      {updateNotice && (
+        <button
+          className={`update-toast ${activeNav === "Stories" ? "stories-toast" : ""}`}
+          type="button"
+          onClick={openNewUpdates}
+          aria-live="polite"
+        >
+          <span />
+          {updateNoticeLabel()}
+        </button>
+      )}
 
       {breakingStories.length > 0 && (
         <section className="breaking-strip" aria-label="Breaking news">
@@ -1626,7 +1688,12 @@ export default function Home() {
 
       <nav className={`mobile-glass-nav ${bottomNavCompact ? "compact" : ""}`} aria-label="Mobile sections">
         {navItems.map((item) => (
-          <button key={item.id} type="button" className={activeNav === item.id ? "active" : ""} onClick={() => chooseNav(item.id)}>
+          <button
+            key={item.id}
+            type="button"
+            className={`${activeNav === item.id ? "active" : ""} ${((item.id === "Top" && updateNotice?.news) || (item.id === "Stories" && updateNotice?.stories)) ? "has-update" : ""}`}
+            onClick={() => chooseNav(item.id)}
+          >
             <img src={item.icon} alt="" aria-hidden="true" />
             {item.label}
           </button>

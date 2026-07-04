@@ -146,6 +146,53 @@ button {
   backdrop-filter: blur(16px);
 }
 
+.update-toast {
+  position: sticky;
+  top: 72px;
+  z-index: 28;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  width: fit-content;
+  margin: 8px auto 0;
+  border: 1px solid rgba(20, 20, 20, 0.08);
+  border-radius: 999px;
+  background: rgba(18, 18, 18, 0.92);
+  color: #fff;
+  padding: 8px 12px;
+  font-size: 12px;
+  font-weight: 900;
+  box-shadow: 0 14px 30px rgba(20, 25, 35, 0.18);
+  backdrop-filter: blur(14px);
+  animation: updateToastIn 260ms ease both;
+}
+
+.update-toast span {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: #e71919;
+  box-shadow: 0 0 0 5px rgba(231, 25, 25, 0.18);
+}
+
+.update-toast.stories-toast {
+  position: fixed;
+  top: max(12px, env(safe-area-inset-top));
+  left: 50%;
+  translate: -50% 0;
+}
+
+@keyframes updateToastIn {
+  from {
+    opacity: 0;
+    transform: translateY(-8px) scale(0.98);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
 .language-dropdown {
   position: relative;
   display: inline-grid;
@@ -266,6 +313,7 @@ button {
 
 .top-nav button,
 .mobile-glass-nav button {
+  position: relative;
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -293,6 +341,19 @@ button {
 .mobile-glass-nav button.active {
   background: var(--accent);
   color: #fff;
+}
+
+.mobile-glass-nav button.has-update::before {
+  content: "";
+  position: absolute;
+  top: 8px;
+  right: 16px;
+  width: 7px;
+  height: 7px;
+  border: 2px solid rgba(255, 255, 255, 0.9);
+  border-radius: 50%;
+  background: #e71919;
+  box-shadow: 0 0 0 4px rgba(231, 25, 25, 0.14);
 }
 
 .header-search {
