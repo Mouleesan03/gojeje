@@ -32,6 +32,22 @@ type ManualDraft = {
   placement: "post" | "story" | "both";
 };
 
+type ScoreMatch = {
+  id: string;
+  title: string;
+  date: string;
+  state: string;
+  status: string;
+  home: {
+    name: string;
+    score: string;
+  };
+  away: {
+    name: string;
+    score: string;
+  };
+};
+
 const navItems = [
   { id: "Top", label: "Home", icon: "/icons/home.svg" },
   { id: "Sri Lanka", label: "Lanka", icon: "/icons/news.svg" },
@@ -41,9 +57,10 @@ const navItems = [
 ];
 const quickSearches = [
   { id: "Latest", label: "Latest" },
-  { id: "Must Know", label: "Must Know" },
+  { id: "Must Know", label: "Must" },
   { id: "Sri Lanka", label: "Lanka" },
   { id: "World", label: "World" },
+  { id: "World Cup Scores", label: "Scores" },
   { id: "BBC Tamil", label: "BBC Tamil" },
   { id: "TamilWin", label: "TamilWin" },
   { id: "Lankasri", label: "Lankasri" },
@@ -64,7 +81,7 @@ const importantWindow = thirtyMinuteWindow;
 const oneHourWindow = 60 * 60 * 1000;
 const feedWindow = 5 * oneHourWindow;
 const categoryWindow = 8 * oneHourWindow;
-const storyWindow = thirtyMinuteWindow;
+const storyWindow = 2 * oneHourWindow;
 const storyLimit = 35;
 const manualStorageKey = "gojeje-manual-stories";
 const savedStoriesStorageKey = "gojeje-saved-stories";
@@ -409,6 +426,11 @@ export default function Home() {
   const [pausedVideoStoryIds, setPausedVideoStoryIds] = useState<Set<string>>(new Set());
   const [soundVideoStoryIds, setSoundVideoStoryIds] = useState<Set<string>>(new Set());
   const [bottomNavCompact, setBottomNavCompact] = useState(false);
+  const [scoreMatches, setScoreMatches] = useState<ScoreMatch[]>([]);
+  const [scoresLoading, setScoresLoading] = useState(false);
+  const [scoresError, setScoresError] = useState("");
+  const [scoreAiLoading, setScoreAiLoading] = useState(false);
+  const [scoreAiAnswer, setScoreAiAnswer] = useState("");
   const summaryAudioRef = useRef<HTMLAudioElement | null>(null);
   const summaryAudioUrlsRef = useRef<Map<string, string>>(new Map());
 
@@ -473,6 +495,27 @@ export default function Home() {
   useEffect(() => {
     setLatestPage(0);
   }, [activeNav, languageFilter, query, recentTopic]);
+
+  useEffect(() => {
+    if (recentTopic !== "World Cup Scores") return;
+
+    async function loadScores() {
+      setScoresLoading(true);
+      setScoresError("");
+      try {
+        const response = await fetch(`/api/scores?ts=${Date.now()}`, { cache: "no-store" });
+        const data = await response.json();
+        setScoreMatches(Array.isArray(data.matches) ? data.matches : []);
+        if (!response.ok || data.error) setScoresError("Scores could not load right now.");
+      } catch {
+        setScoresError("Scores could not load right now.");
+      } finally {
+        setScoresLoading(false);
+      }
+    }
+
+    loadScores();
+  }, [recentTopic]);
 
   useEffect(() => {
     let frame = 0;
@@ -590,6 +633,7 @@ export default function Home() {
     if (recentTopic === "Sri Lanka") return filteredStories.filter(isSriLankaStory);
     if (recentTopic === "World") return filteredStories.filter(isWorldStory);
     if (recentTopic === "Saved") return filteredStories.filter((story) => savedStoryIds.includes(story.id));
+    if (recentTopic === "World Cup Scores") return [];
     return filteredStories.filter((story) => [story.source, story.category, story.title, story.summary].join(" ").toLowerCase().includes(recentTopic.toLowerCase()));
   }, [filteredStories, isCategoryFeed, recentTopic, savedStoryIds]);
   const latestStories = topicFilteredStories.filter((story) => !leadCarouselStories.some((leadStory) => leadStory.id === story.id)).slice(0, 100);
@@ -659,6 +703,44 @@ export default function Home() {
         ? `${question}\n\nCompare different news platforms and summarize the difference.`
         : question;
     await askPrompt(prompt, story);
+  }
+
+  async function explainScores() {
+    setScoreAiLoading(true);
+    setScoreAiAnswer("");
+
+    const scoreStories: Story[] = scoreMatches.map((match) => ({
+      id: `score-${match.id}`,
+      title: `${match.home.name} ${match.home.score || "-"} - ${match.away.score || "-"} ${match.away.name}`,
+      summary: `Match status: ${match.status}. State: ${match.state}. Kickoff/date: ${match.date || "not available"}.`,
+      source: "FIFA World Cup Scores",
+      category: "Football",
+      language: languageFilter === "English" ? "English" : "Tamil",
+      publishedAt: match.date || new Date().toISOString(),
+      url: "",
+      image: "",
+      tone: "city"
+    }));
+
+    try {
+      const response = await fetch("/api/ask", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          question:
+            languageFilter === "English"
+              ? "Explain these World Cup scores and fixtures in 2 short sentences. Mention live/final/upcoming clearly. Do not invent anything."
+              : "இந்த உலகக் கோப்பை ஸ்கோர் மற்றும் போட்டி விவரங்களை 2 குறுகிய வாக்கியங்களில் எளிதாக விளக்கவும். Live, Final, Upcoming என்பதை தெளிவாக சொல்லவும். இல்லாத தகவலை உருவாக்க வேண்டாம்.",
+          stories: scoreStories
+        })
+      });
+      const data = await response.json();
+      setScoreAiAnswer(data.answer ?? "GOjeje AI இப்போது ஸ்கோர் விளக்கம் தர முடியவில்லை.");
+    } catch {
+      setScoreAiAnswer("GOjeje AI இப்போது ஸ்கோர் விளக்கம் தர முடியவில்லை.");
+    } finally {
+      setScoreAiLoading(false);
+    }
   }
 
   async function saveManualStory(event: FormEvent<HTMLFormElement>) {
@@ -1040,13 +1122,14 @@ export default function Home() {
     <main className={`site-shell ${activeNav === "Stories" ? "stories-active" : ""}`}>
       {bootLoading && (
         <div className="site-preloader" role="status" aria-live="polite">
-          <div>
+          <div className="news-pulse-loader">
             <img src="/gojeje.png" alt="GOjeje" />
-            <span>
-              <i />
-              <i />
-              <i />
-            </span>
+            <p><i /></p>
+            <div className="loader-lines" aria-hidden="true">
+              <span />
+              <span />
+              <span />
+            </div>
           </div>
         </div>
       )}
@@ -1362,7 +1445,6 @@ export default function Home() {
                   <div className="tiktok-story-copy">
                     <span>{story.source} · {relativeTime(story.publishedAt)} ago</span>
                     <h3>{story.title}</h3>
-                    {story.summary ? <p>{shortText(story.summary, 120)}</p> : null}
                   </div>
                 )}
                 {storyMediaType(story) === "image" && (
@@ -1417,43 +1499,126 @@ export default function Home() {
 
           <section className="content-section">
             <div className="section-heading feed-heading">
-              <h2>{isCategoryFeed ? `${activeNav} News` : "Recent Feed"}</h2>
+              <h2>{isCategoryFeed ? `${activeNav} News` : "Recent"}</h2>
               {!isCategoryFeed && (
                 <div className="quick-chips">
                   {quickSearches.map((chip) => (
-                    <button type="button" key={chip.id} className={recentTopic === chip.id ? "active" : ""} onClick={() => setRecentTopic(chip.id)}>{chip.label}</button>
+                    <button
+                      type="button"
+                      key={chip.id}
+                      className={recentTopic === chip.id ? "active" : ""}
+                      onClick={() => setRecentTopic(chip.id)}
+                    >
+                      {chip.label}
+                    </button>
                   ))}
                 </div>
               )}
             </div>
 
-            <div className="article-grid">
-              {paginatedLatestStories.length ? paginatedLatestStories.map((story) => (
-                <article className="article-card" key={story.id} onClick={() => openSummary(story)}>
-                  <div className={`article-thumb ${toneClass[story.tone] ?? "tone-city"}`}>
-                    <NewsImage src={story.image} />
-                  </div>
+            {recentTopic === "World Cup Scores" && !isCategoryFeed ? (
+              <div className="score-panel">
+                <div className="score-panel-head">
                   <div>
-                    <h3>{story.title}</h3>
-                    <div className="meta-row">
-                      <span className="source-chip">{story.source}</span>
-                      <span className="badge">{story.category}</span>
-                      <span className="time-chip">{relativeTime(story.publishedAt)} ago</span>
-                    </div>
+                    <span>FIFA World Cup</span>
+                    <h3>Scores & fixtures</h3>
                   </div>
-                </article>
-              )) : <div className="feed-empty">{loading ? "Loading recent news..." : isCategoryFeed ? `No ${activeNav.toLowerCase()} news right now.` : "No other news from the last 5 hours."}</div>}
-            </div>
-            {feedStories.length > latestPageSize && (
-              <div className="pagination-row">
-                <button type="button" onClick={() => setLatestPage((page) => Math.max(0, page - 1))} disabled={latestPage === 0}>
-                  Previous
-                </button>
-                <span>Page {latestPage + 1} of {latestPageCount}</span>
-                <button type="button" onClick={() => setLatestPage((page) => Math.min(latestPageCount - 1, page + 1))} disabled={latestPage >= latestPageCount - 1}>
-                  Next
-                </button>
+                  <div className="score-panel-actions">
+                    <button
+                      type="button"
+                      onClick={explainScores}
+                      disabled={scoreAiLoading || scoresLoading || !scoreMatches.length}
+                    >
+                      {scoreAiLoading ? "AI..." : "AI explain"}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={async () => {
+                        setScoresLoading(true);
+                        setScoresError("");
+                        setScoreAiAnswer("");
+                        try {
+                          const response = await fetch(`/api/scores?ts=${Date.now()}`, { cache: "no-store" });
+                          const data = await response.json();
+                          setScoreMatches(Array.isArray(data.matches) ? data.matches : []);
+                          if (!response.ok || data.error) setScoresError("Scores could not load right now.");
+                        } catch {
+                          setScoresError("Scores could not load right now.");
+                        } finally {
+                          setScoresLoading(false);
+                        }
+                      }}
+                      disabled={scoresLoading}
+                    >
+                      {scoresLoading ? "Loading" : "Refresh"}
+                    </button>
+                  </div>
+                </div>
+                <div className="score-list">
+                  {scoreMatches.length ? scoreMatches.map((match) => (
+                    <article className={`score-card score-${match.state}`} key={match.id}>
+                      <div className="score-status">
+                        <span>{match.state === "in" ? "Live" : match.state === "post" ? "Final" : "Fixture"}</span>
+                        <b>{match.status}</b>
+                      </div>
+                      <div className="score-teams">
+                        <span>{match.home.name}</span>
+                        <strong>{match.home.score || "-"}</strong>
+                      </div>
+                      <div className="score-teams">
+                        <span>{match.away.name}</span>
+                        <strong>{match.away.score || "-"}</strong>
+                      </div>
+                    </article>
+                  )) : (
+                    <div className="score-empty">
+                      <span>{scoresLoading ? "Loading" : "Scores"}</span>
+                      <strong>{scoresLoading ? "Checking matches..." : "No matches showing right now"}</strong>
+                      <p>{scoresError || "Use the official FIFA page for the full fixture list and match centre."}</p>
+                    </div>
+                  )}
+                </div>
+                {(scoreAiLoading || scoreAiAnswer) && (
+                  <div className={`score-ai-card ${scoreAiLoading ? "loading" : ""}`}>
+                    <span>GOjeje AI</span>
+                    <p>{scoreAiLoading ? "Reading the fixtures..." : scoreAiAnswer}</p>
+                  </div>
+                )}
+                <a className="score-official-link" href="https://www.fifa.com/en/tournaments/mens/worldcup/canadamexicousa2026/scores-fixtures" target="_blank" rel="noreferrer">
+                  Open official FIFA scores
+                </a>
               </div>
+            ) : (
+              <>
+                <div className="article-grid">
+                  {paginatedLatestStories.length ? paginatedLatestStories.map((story) => (
+                  <article className="article-card" key={story.id} onClick={() => openSummary(story)}>
+                    <div className={`article-thumb ${toneClass[story.tone] ?? "tone-city"}`}>
+                      <NewsImage src={story.image} />
+                    </div>
+                    <div>
+                      <h3>{story.title}</h3>
+                      <div className="meta-row">
+                        <span className="source-chip">{story.source}</span>
+                        <span className="badge">{story.category}</span>
+                        <span className="time-chip">{relativeTime(story.publishedAt)} ago</span>
+                      </div>
+                    </div>
+                  </article>
+                  )) : <div className="feed-empty">{loading ? "Loading recent news..." : isCategoryFeed ? `No ${activeNav.toLowerCase()} news right now.` : "No other news from the last 5 hours."}</div>}
+                </div>
+                {feedStories.length > latestPageSize && (
+                  <div className="pagination-row">
+                    <button type="button" onClick={() => setLatestPage((page) => Math.max(0, page - 1))} disabled={latestPage === 0}>
+                      Previous
+                    </button>
+                    <span>Page {latestPage + 1} of {latestPageCount}</span>
+                    <button type="button" onClick={() => setLatestPage((page) => Math.min(latestPageCount - 1, page + 1))} disabled={latestPage >= latestPageCount - 1}>
+                      Next
+                    </button>
+                  </div>
+                )}
+              </>
             )}
           </section>
         </>

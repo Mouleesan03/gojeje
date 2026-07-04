@@ -26,16 +26,19 @@ const sources: Source[] = [
   { name: "TamilWin", category: "Sri Lanka", language: "Tamil", kind: "page", url: "https://tamilwin.com/latest", host: "https://tamilwin.com" },
   { name: "Lankasri", category: "Sri Lanka", language: "Tamil", kind: "page", url: "https://news.lankasri.com/srilanka", host: "https://news.lankasri.com" },
   { name: "TamilMirror", category: "Sri Lanka", language: "Tamil", kind: "page", url: "https://www.tamilmirror.lk", host: "https://www.tamilmirror.lk" },
-  { name: "News 1st Tamil", category: "Sri Lanka", language: "Tamil", kind: "page", url: "https://www.newsfirst.lk/tamil", host: "https://www.newsfirst.lk" },
+  { name: "News 1st Tamil", category: "Sri Lanka", language: "Tamil", kind: "page", url: "https://tamil.newsfirst.lk/latest", host: "https://tamil.newsfirst.lk" },
   { name: "BBC News", category: "World", language: "English", kind: "rss", url: "https://feeds.bbci.co.uk/news/rss.xml" },
+  { name: "BBC World", category: "World", language: "English", kind: "rss", url: "https://feeds.bbci.co.uk/news/world/rss.xml" },
+  { name: "BBC Business", category: "Business", language: "English", kind: "rss", url: "https://feeds.bbci.co.uk/news/business/rss.xml" },
+  { name: "BBC Technology", category: "Technology", language: "English", kind: "rss", url: "https://feeds.bbci.co.uk/news/technology/rss.xml" },
   { name: "BBC Tamil", category: "Tamil", language: "Tamil", kind: "rss", url: "https://feeds.bbci.co.uk/tamil/rss.xml" },
-  { name: "Google News Sri Lanka", category: "Sri Lanka", language: "English", kind: "rss", url: "https://news.google.com/rss/search?q=Sri+Lanka+news+when:8h&hl=en-US&gl=US&ceid=US:en" },
-  { name: "Google News Sinhala", category: "Sri Lanka", language: "Sinhala", kind: "rss", url: "https://news.google.com/rss/search?q=Sri+Lanka+Sinhala+news+when:8h&hl=en-US&gl=US&ceid=US:en" },
-  { name: "Dinamani", category: "Tamil World", language: "Tamil", kind: "page", url: "https://www.dinamani.com/rss", host: "https://www.dinamani.com" },
+  { name: "Dinamani", category: "Tamil World", language: "Tamil", kind: "rss", url: "https://www.dinamani.com/stories.rss" },
   { name: "Al Jazeera", category: "World", language: "English", kind: "rss", url: "https://www.aljazeera.com/xml/rss/all.xml" },
   { name: "CNN", category: "World", language: "English", kind: "rss", url: "http://rss.cnn.com/rss/edition.rss" },
   { name: "AP News", category: "World", language: "English", kind: "rss", url: "https://apnews.com/hub/ap-top-news?output=rss" },
   { name: "The Guardian", category: "World", language: "English", kind: "rss", url: "https://www.theguardian.com/world/rss" },
+  { name: "Guardian Business", category: "Business", language: "English", kind: "rss", url: "https://www.theguardian.com/business/rss" },
+  { name: "Guardian Technology", category: "Technology", language: "English", kind: "rss", url: "https://www.theguardian.com/technology/rss" },
   { name: "Indian Express", category: "India", language: "English", kind: "rss", url: "https://indianexpress.com/section/india/feed/" },
   { name: "The Hindu", category: "India", language: "English", kind: "rss", url: "https://www.thehindu.com/news/national/feeder/default.rss" },
   { name: "News First", category: "Sri Lanka", language: "English", kind: "rss", url: "https://www.newsfirst.lk/feed/" },
@@ -45,7 +48,8 @@ const sources: Source[] = [
   { name: "News 1st Sinhala", category: "Sri Lanka", language: "Sinhala", kind: "page", url: "https://sinhala.newsfirst.lk", host: "https://sinhala.newsfirst.lk" },
   { name: "NewsWire", category: "General", language: "English", kind: "rss", url: "https://www.newswire.lk/feed/" },
   { name: "EconomyNext", category: "Business", language: "English", kind: "rss", url: "https://economynext.com/feed/" },
-  { name: "Daily Mirror", category: "General", language: "English", kind: "rss", url: "https://www.dailymirror.lk/rss/top-story" }
+  { name: "Daily Mirror", category: "General", language: "English", kind: "rss", url: "https://www.dailymirror.lk/rss/top-story" },
+  { name: "Daily Mirror Latest", category: "Sri Lanka", language: "English", kind: "rss", url: "https://www.dailymirror.lk/index.php?format=feed&type=rss" }
 ];
 
 const feedWindow = 8 * 60 * 60 * 1000;
@@ -402,20 +406,26 @@ function isPopularWindowStory(story: Story) {
 function popularityScore(story: Story) {
   const sourceWeight: Record<string, number> = {
     "BBC News": 26,
-    "BBC Tamil": 26,
+    "BBC World": 24,
+    "BBC Business": 20,
+    "BBC Technology": 20,
+    "BBC Tamil": 30,
     "News First": 24,
     "Ada Derana": 23,
     "Ada Derana Sinhala": 25,
     NewsWire: 22,
-    TamilWin: 25,
-    Lankasri: 25,
-    TamilMirror: 23,
-    "Google News Sri Lanka": 22,
-    "Google News Sinhala": 22,
+    TamilWin: 30,
+    Lankasri: 30,
+    TamilMirror: 28,
     "The Hindu": 14,
+    "The Guardian": 18,
+    "Guardian Business": 16,
+    "Guardian Technology": 16,
+    Dinamani: 24,
     "Al Jazeera": 18,
     EconomyNext: 17,
-    "Daily Mirror": 17
+    "Daily Mirror": 17,
+    "Daily Mirror Latest": 17
   };
   const text = `${story.title} ${story.summary} ${story.category}`.toLowerCase();
   const ageMinutes = Math.max(1, (Date.now() - new Date(story.publishedAt).getTime()) / 60000);
@@ -433,15 +443,21 @@ function sourceFeedCap(source: string) {
     "Al Jazeera": 12,
     NewsWire: 14,
     "BBC News": 10,
-    "Google News Sri Lanka": 8,
-    "Google News Sinhala": 8,
-    Lankasri: 14,
-    TamilWin: 12,
-    TamilMirror: 10,
-    "BBC Tamil": 10,
+    "BBC World": 10,
+    "BBC Business": 8,
+    "BBC Technology": 8,
+    "The Guardian": 10,
+    "Guardian Business": 8,
+    "Guardian Technology": 8,
+    Lankasri: 18,
+    TamilWin: 18,
+    TamilMirror: 16,
+    "BBC Tamil": 16,
+    Dinamani: 18,
     "Ada Derana Sinhala": 14,
     "News 1st Sinhala": 8,
-    "News 1st Tamil": 8
+    "News 1st Tamil": 14,
+    "Daily Mirror Latest": 8
   };
   return caps[source] ?? 8;
 }
@@ -454,9 +470,22 @@ function balancedStories(items: Story[], limit: number) {
   });
   const counts = new Map<string, number>();
   const chosen: Story[] = [];
+  const minimumTamilStories = limit >= 50
+    ? Math.min(ranked.filter((story) => story.language === "Tamil").length, Math.ceil(limit * 0.4))
+    : 0;
+
+  for (const story of ranked) {
+    if (chosen.length >= minimumTamilStories) break;
+    if (story.language !== "Tamil") continue;
+    const count = counts.get(story.source) ?? 0;
+    if (count >= sourceFeedCap(story.source)) continue;
+    counts.set(story.source, count + 1);
+    chosen.push(story);
+  }
 
   for (const story of ranked) {
     if (chosen.length >= limit) break;
+    if (chosen.some((item) => item.id === story.id)) continue;
     const count = counts.get(story.source) ?? 0;
     if (count >= sourceFeedCap(story.source)) continue;
     counts.set(story.source, count + 1);
