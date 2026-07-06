@@ -53,14 +53,37 @@ type UpdateNotice = {
   stories: number;
 };
 
+type StoryComment = {
+  id: string;
+  storyId: string;
+  nickname: string;
+  text: string;
+  createdAt: string;
+};
+
+type StoryEngagement = {
+  liked: boolean;
+  likes: number;
+  shares: number;
+  comments: StoryComment[];
+};
+
+type StoryUser = {
+  nickname: string;
+  deviceId: string;
+  createdAt: string;
+  renameAvailableAt: string;
+};
+
 type ThemePreference = "light" | "dark";
 type ResolvedTheme = "light" | "dark";
+type StoryFeedMode = "news" | "video";
 
 const navItems = [
   { id: "Top", label: "Home", icon: "/icons/home.svg" },
   { id: "Sri Lanka", label: "Lanka", icon: "/icons/news.svg" },
-  { id: "World", label: "World", icon: "/icons/world.svg" },
   { id: "Stories", label: "Stories", icon: "/icons/stories.svg" },
+  { id: "World", label: "World", icon: "/icons/world.svg" },
   { id: "AI", label: "AI", icon: "/icons/ai.svg" }
 ];
 const quickSearches = [
@@ -121,6 +144,9 @@ const storyLimit = 35;
 const manualStorageKey = "gojeje-manual-stories";
 const savedStoriesStorageKey = "gojeje-saved-stories";
 const themeStorageKey = "gojeje-theme";
+const storyUserStorageKey = "gojeje-story-user";
+const storyEngagementStorageKey = "gojeje-story-engagement";
+const storyUserLockMs = 30 * 24 * 60 * 60 * 1000;
 
 const emptyManualDraft: ManualDraft = {
   title: "",
@@ -331,6 +357,43 @@ function storyFileName(story: Story) {
   return `${safeFileName(`${story.source}-${story.language}-${story.category}`)}-${stamp}-gojeje.jpg`;
 }
 
+function cleanNickname(value: string) {
+  return value.replace(/[^\p{L}\p{N}_ .-]+/gu, "").replace(/\s+/g, " ").trim().slice(0, 24);
+}
+
+function cleanComment(value: string) {
+  return value.replace(/\s+/g, " ").trim().slice(0, 180);
+}
+
+function formatCount(value: number) {
+  if (value >= 1000000) return `${(value / 1000000).toFixed(value >= 10000000 ? 0 : 1)}M`;
+  if (value >= 1000) return `${(value / 1000).toFixed(value >= 10000 ? 0 : 1)}K`;
+  return `${value}`;
+}
+
+function seededStoryCount(story: Story, salt: number, min: number, range: number) {
+  const seed = `${story.id}:${story.source}:${salt}`;
+  let hash = 0;
+  for (let index = 0; index < seed.length; index += 1) {
+    hash = (hash * 31 + seed.charCodeAt(index)) >>> 0;
+  }
+  return min + (hash % range);
+}
+
+function defaultStoryEngagement(story: Story): StoryEngagement {
+  return {
+    liked: false,
+    likes: 0,
+    shares: seededStoryCount(story, 29, 18, 980),
+    comments: []
+  };
+}
+
+function createDeviceId() {
+  if (typeof crypto !== "undefined" && "randomUUID" in crypto) return crypto.randomUUID();
+  return `device-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+}
+
 function wrapCanvasText(context: CanvasRenderingContext2D, text: string, x: number, y: number, maxWidth: number, lineHeight: number, maxLines: number) {
   const words = text.split(/\s+/);
   const lines: string[] = [];
@@ -516,6 +579,14 @@ export default function Home() {
   const [updateNotice, setUpdateNotice] = useState<UpdateNotice | null>(null);
   const [themePreference, setThemePreference] = useState<ThemePreference>("light");
   const [resolvedTheme, setResolvedTheme] = useState<ResolvedTheme>("light");
+  const [storyUser, setStoryUser] = useState<StoryUser | null>(null);
+  const [storyNicknameDraft, setStoryNicknameDraft] = useState("");
+  const [storyCommentDrafts, setStoryCommentDrafts] = useState<Record<string, string>>({});
+  const [openStoryCommentsId, setOpenStoryCommentsId] = useState("");
+  const [storyEngagement, setStoryEngagement] = useState<Record<string, StoryEngagement>>({});
+  const [pendingLikeStoryId, setPendingLikeStoryId] = useState("");
+  const [storyLikeBurst, setStoryLikeBurst] = useState<{ storyId: string; key: number } | null>(null);
+  const [storyFeedMode, setStoryFeedMode] = useState<StoryFeedMode>("news");
   const summaryAudioRef = useRef<HTMLAudioElement | null>(null);
   const summaryAudioUrlsRef = useRef<Map<string, string>>(new Map());
   const knownStoryIdsRef = useRef<Set<string>>(new Set());
@@ -585,6 +656,23 @@ export default function Home() {
       if (saved) setManualStories(JSON.parse(saved));
       const savedIds = window.localStorage.getItem(savedStoriesStorageKey);
       if (savedIds) setSavedStoryIds(JSON.parse(savedIds));
+      const savedUser = window.localStorage.getItem(storyUserStorageKey);
+      if (savedUser) {
+        const parsedUser = JSON.parse(savedUser) as StoryUser;
+        setStoryUser(parsedUser);
+        setStoryNicknameDraft(parsedUser.nickname);
+      }
+      const savedEngagement = window.localStorage.getItem(storyEngagementStorageKey);
+      if (savedEngagement) {
+        const parsedEngagement = JSON.parse(savedEngagement) as Record<string, StoryEngagement>;
+        const normalizedEngagement = Object.fromEntries(
+          Object.entries(parsedEngagement).map(([id, item]) => [
+            id,
+            { ...item, likes: item.liked ? Math.max(1, item.likes) : 0 }
+          ])
+        );
+        setStoryEngagement(normalizedEngagement);
+      }
     } catch {
       setManualStories([]);
     }
@@ -613,6 +701,14 @@ export default function Home() {
   useEffect(() => {
     window.localStorage.setItem(savedStoriesStorageKey, JSON.stringify(savedStoryIds));
   }, [savedStoryIds]);
+
+  useEffect(() => {
+    window.localStorage.setItem(storyEngagementStorageKey, JSON.stringify(storyEngagement));
+  }, [storyEngagement]);
+
+  useEffect(() => {
+    if (storyUser) window.localStorage.setItem(storyUserStorageKey, JSON.stringify(storyUser));
+  }, [storyUser]);
 
   useEffect(() => {
     setQuestion("");
@@ -698,6 +794,15 @@ export default function Home() {
     const popular = storyWindowStories.filter((story) => popularSources.includes(story.source) || story.tone === "alert" || isTopWindowStory(story) || isSriLankaStory(story));
     return (popular.length ? popular : tamilStories.length ? tamilStories : storyWindowStories).slice(0, storyLimit);
   }, [storyWindowStories, tamilStories]);
+  const newsStoryFeed = useMemo(() => {
+    const newsItems = webStories.filter((story) => storyMediaType(story) === "news");
+    return newsItems.length ? newsItems : webStories.filter((story) => storyMediaType(story) !== "video");
+  }, [webStories]);
+  const videoStoryFeed = useMemo(() => {
+    const mediaItems = languageScopedStoryItems.filter((story) => storyMediaType(story) === "video" || storyMediaType(story) === "image");
+    return mediaItems.slice(0, storyLimit);
+  }, [languageScopedStoryItems]);
+  const activeStoryFeed = storyFeedMode === "video" ? videoStoryFeed : newsStoryFeed;
 
   useEffect(() => {
     if (activeNav !== "Stories") {
@@ -721,7 +826,7 @@ export default function Home() {
 
     cards.forEach((card) => observer.observe(card));
     return () => observer.disconnect();
-  }, [activeNav, webStories]);
+  }, [activeNav, activeStoryFeed]);
 
   const filteredStories = useMemo(() => {
     const search = query.trim().toLowerCase();
@@ -1115,6 +1220,118 @@ export default function Home() {
     setStoryIndex(null);
   }
 
+  function engagementFor(story: Story) {
+    return storyEngagement[story.id] ?? defaultStoryEngagement(story);
+  }
+
+  function updateStoryEngagement(story: Story, updater: (current: StoryEngagement) => StoryEngagement) {
+    setStoryEngagement((items) => {
+      const current = items[story.id] ?? defaultStoryEngagement(story);
+      return { ...items, [story.id]: updater(current) };
+    });
+  }
+
+  function showStoryLikeBurst(story: Story) {
+    setStoryLikeBurst({ storyId: story.id, key: Date.now() });
+    window.setTimeout(() => {
+      setStoryLikeBurst((current) => (current?.storyId === story.id ? null : current));
+    }, 760);
+  }
+
+  function toggleStoryLike(story: Story, forceLike = false) {
+    if (!storyUser) {
+      setPendingLikeStoryId(story.id);
+      setOpenStoryCommentsId(story.id);
+      return;
+    }
+
+    updateStoryEngagement(story, (current) => {
+      const liked = forceLike ? true : !current.liked;
+      return {
+        ...current,
+        liked,
+        likes: Math.max(0, current.likes + (liked === current.liked ? 0 : liked ? 1 : -1))
+      };
+    });
+    if (forceLike || !engagementFor(story).liked) showStoryLikeBurst(story);
+  }
+
+  function handleStoryCardTap(event: MouseEvent<HTMLElement>, story: Story) {
+    const target = event.target as HTMLElement;
+    if (target.closest("button, a, input, textarea, select, form, .story-comment-panel, .video-toggle-button, .video-sound-button")) return;
+    toggleStoryLike(story, true);
+  }
+
+  function completePendingStoryLike() {
+    if (!pendingLikeStoryId) return;
+    const pendingStory = activeStoryFeed.find((story) => story.id === pendingLikeStoryId);
+    if (!pendingStory) return;
+    setPendingLikeStoryId("");
+    updateStoryEngagement(pendingStory, (current) => ({
+      ...current,
+      liked: true,
+      likes: current.liked ? current.likes : current.likes + 1
+    }));
+    showStoryLikeBurst(pendingStory);
+  }
+
+  function saveStoryNickname() {
+    const nickname = cleanNickname(storyNicknameDraft);
+    if (!nickname) return;
+
+    const now = Date.now();
+    if (storyUser && now < new Date(storyUser.renameAvailableAt).getTime()) {
+      setStoryNicknameDraft(storyUser.nickname);
+      return;
+    }
+
+    const nextUser: StoryUser = {
+      nickname,
+      deviceId: storyUser?.deviceId ?? createDeviceId(),
+      createdAt: storyUser?.createdAt ?? new Date(now).toISOString(),
+      renameAvailableAt: new Date(now + storyUserLockMs).toISOString()
+    };
+    setStoryUser(nextUser);
+    setStoryNicknameDraft(nickname);
+    completePendingStoryLike();
+  }
+
+  function postStoryComment(story: Story) {
+    const nickname = cleanNickname(storyNicknameDraft || storyUser?.nickname || "");
+    const text = cleanComment(storyCommentDrafts[story.id] ?? "");
+    if (!text) return;
+    if (!storyUser) {
+      if (!nickname) return;
+      const now = Date.now();
+      setStoryUser({
+        nickname,
+        deviceId: createDeviceId(),
+        createdAt: new Date(now).toISOString(),
+        renameAvailableAt: new Date(now + storyUserLockMs).toISOString()
+      });
+      setStoryNicknameDraft(nickname);
+      completePendingStoryLike();
+    }
+
+    const comment: StoryComment = {
+      id: `comment-${Date.now()}-${Math.random().toString(36).slice(2)}`,
+      storyId: story.id,
+      nickname,
+      text,
+      createdAt: new Date().toISOString()
+    };
+    updateStoryEngagement(story, (current) => ({
+      ...current,
+      comments: [comment, ...current.comments].slice(0, 30)
+    }));
+    setStoryCommentDrafts((items) => ({ ...items, [story.id]: "" }));
+  }
+
+  async function shareFromStoryFeed(story: Story) {
+    updateStoryEngagement(story, (current) => ({ ...current, shares: current.shares + 1 }));
+    await shareStoryCard(story);
+  }
+
   function nearestLeadIndex() {
     const carousel = leadCarouselRef.current;
     if (!carousel) return 0;
@@ -1325,7 +1542,7 @@ export default function Home() {
   );
 
   return (
-    <main className={`site-shell ${activeNav === "Stories" ? "stories-active" : ""}`} data-theme={resolvedTheme}>
+    <main className={`site-shell ${activeNav === "Stories" ? "stories-active" : ""} ${activeNav === "Stories" && openStoryCommentsId ? "stories-commenting" : ""}`} data-theme={resolvedTheme}>
       {bootLoading && (
         <div className="site-preloader" role="status" aria-live="polite">
           <div className="news-pulse-loader">
@@ -1426,7 +1643,9 @@ export default function Home() {
       {searchOpen && query.trim() && (
         <section className="search-overlay" aria-label="Search results">
           <div className="search-panel">
-            <button className="search-close" type="button" onClick={() => setSearchOpen(false)} aria-label="Close search">×</button>
+            <button className="search-close" type="button" onClick={() => setSearchOpen(false)} aria-label="Close search">
+              <img src="/icons/close-circle.svg" alt="" aria-hidden="true" />
+            </button>
             <div className="section-heading">
               <div>
                 <p className="eyebrow">AI search</p>
@@ -1497,7 +1716,9 @@ export default function Home() {
             <button className="close-button" type="button" onClick={() => {
               setBackdoorOpen(false);
               if (window.location.hash === "#backdoor") history.replaceState(null, "", window.location.pathname + window.location.search);
-            }} aria-label="Close">×</button>
+            }} aria-label="Close">
+              <img src="/icons/close-circle.svg" alt="" aria-hidden="true" />
+            </button>
             <div className="admin-panel-head">
               <p className="eyebrow">Backdoor</p>
               <h2>Add post or story</h2>
@@ -1624,92 +1845,166 @@ export default function Home() {
         </section>
       ) : activeNav === "Stories" ? (
         <section className="stories-page" id="stories">
-          {webStories.length > 1 && (
+          <div className="story-feed-tabs" aria-label="Story feed sections">
+            <button className={storyFeedMode === "news" ? "active" : ""} type="button" onClick={() => setStoryFeedMode("news")}>News</button>
+            <button className={storyFeedMode === "video" ? "active" : ""} type="button" onClick={() => setStoryFeedMode("video")}>Videos</button>
+          </div>
+          {activeStoryFeed.length > 1 && (
             <div className="story-swipe-hint" aria-hidden="true">
               <span>↑</span>
               Swipe up
             </div>
           )}
           <div className="tiktok-story-feed">
-            {webStories.length ? webStories.map((story, index) => (
-              <article
-                className={`tiktok-story-card story-kind-${storyMediaType(story)}`}
-                key={story.id}
-                data-story-video-id={storyMediaType(story) === "video" ? story.id : undefined}
-              >
-                {storyMediaType(story) === "video" && youtubeEmbedUrl(story.videoUrl || story.url) ? (
-                  <>
-                    {activeVideoStoryId === story.id && !pausedVideoStoryIds.has(story.id) ? (
-                      <iframe
-                        src={youtubeEmbedUrl(story.videoUrl || story.url, !soundVideoStoryIds.has(story.id))}
-                        title={story.title}
-                        allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share"
-                        allowFullScreen
-                      />
-                    ) : (
+            {activeStoryFeed.length ? activeStoryFeed.map((story, index) => {
+              const engagement = engagementFor(story);
+              const commentsOpen = openStoryCommentsId === story.id;
+              const canRename = !storyUser || Date.now() >= new Date(storyUser.renameAvailableAt).getTime();
+              return (
+                <article
+                  className={`tiktok-story-card story-kind-${storyMediaType(story)}`}
+                  key={story.id}
+                  data-story-video-id={storyMediaType(story) === "video" ? story.id : undefined}
+                  onClick={(event) => handleStoryCardTap(event, story)}
+                >
+                  {storyMediaType(story) === "video" && youtubeEmbedUrl(story.videoUrl || story.url) ? (
+                    <>
+                      {activeVideoStoryId === story.id && !pausedVideoStoryIds.has(story.id) ? (
+                        <iframe
+                          src={youtubeEmbedUrl(story.videoUrl || story.url, !soundVideoStoryIds.has(story.id))}
+                          title={story.title}
+                          allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share"
+                          allowFullScreen
+                        />
+                      ) : (
+                        <div className={`story-media ${toneClass[story.tone] ?? "tone-city"}`}>
+                          <NewsImage src={story.image} />
+                        </div>
+                      )}
+                      <button
+                        className={`video-toggle-button ${pausedVideoStoryIds.has(story.id) ? "paused" : ""}`}
+                        type="button"
+                        aria-label={pausedVideoStoryIds.has(story.id) ? "Play video" : "Pause video"}
+                        onClick={() => {
+                          setActiveVideoStoryId(story.id);
+                          setPausedVideoStoryIds((items) => {
+                            const next = new Set(items);
+                            if (next.has(story.id)) next.delete(story.id);
+                            else next.add(story.id);
+                            return next;
+                          });
+                        }}
+                      >
+                        {pausedVideoStoryIds.has(story.id) ? "▶" : "Ⅱ"}
+                      </button>
+                      <button
+                        className={`video-sound-button ${soundVideoStoryIds.has(story.id) ? "active" : ""}`}
+                        type="button"
+                        onClick={() => {
+                          setActiveVideoStoryId(story.id);
+                          setPausedVideoStoryIds((items) => {
+                            const next = new Set(items);
+                            next.delete(story.id);
+                            return next;
+                          });
+                          setSoundVideoStoryIds((items) => {
+                            const next = new Set(items);
+                            if (next.has(story.id)) next.delete(story.id);
+                            else next.add(story.id);
+                            return next;
+                          });
+                        }}
+                      >
+                        {soundVideoStoryIds.has(story.id) ? "Sound on" : "Tap for sound"}
+                      </button>
+                    </>
+                  ) : (
+                    <div className="tiktok-media-button" aria-label={story.title}>
                       <div className={`story-media ${toneClass[story.tone] ?? "tone-city"}`}>
                         <NewsImage src={story.image} />
                       </div>
-                    )}
-                    <button
-                      className={`video-toggle-button ${pausedVideoStoryIds.has(story.id) ? "paused" : ""}`}
-                      type="button"
-                      aria-label={pausedVideoStoryIds.has(story.id) ? "Play video" : "Pause video"}
-                      onClick={() => {
-                        setActiveVideoStoryId(story.id);
-                        setPausedVideoStoryIds((items) => {
-                          const next = new Set(items);
-                          if (next.has(story.id)) next.delete(story.id);
-                          else next.add(story.id);
-                          return next;
-                        });
-                      }}
-                    >
-                      {pausedVideoStoryIds.has(story.id) ? "▶" : "Ⅱ"}
-                    </button>
-                    <button
-                      className={`video-sound-button ${soundVideoStoryIds.has(story.id) ? "active" : ""}`}
-                      type="button"
-                      onClick={() => {
-                        setActiveVideoStoryId(story.id);
-                        setPausedVideoStoryIds((items) => {
-                          const next = new Set(items);
-                          next.delete(story.id);
-                          return next;
-                        });
-                        setSoundVideoStoryIds((items) => {
-                          const next = new Set(items);
-                          if (next.has(story.id)) next.delete(story.id);
-                          else next.add(story.id);
-                          return next;
-                        });
-                      }}
-                    >
-                      {soundVideoStoryIds.has(story.id) ? "Sound on" : "Tap for sound"}
-                    </button>
-                  </>
-                ) : (
-                  <button className="tiktok-media-button" type="button" onClick={() => openStory(index)} aria-label={story.title}>
-                    <div className={`story-media ${toneClass[story.tone] ?? "tone-city"}`}>
-                      <NewsImage src={story.image} />
                     </div>
-                  </button>
-                )}
-                {storyMediaType(story) === "news" && (
+                  )}
+
+                  <div className="tiktok-action-rail" aria-label="Story actions">
+                    <button className={engagement.liked ? "liked" : ""} type="button" onClick={() => toggleStoryLike(story)} aria-label="Like story">
+                      <span>♥</span>
+                      <strong>{formatCount(engagement.likes)}</strong>
+                    </button>
+                    <button type="button" onClick={() => setOpenStoryCommentsId(commentsOpen ? "" : story.id)} aria-label="Open comments">
+                      <span><img src="/icons/story-comment.svg" alt="" aria-hidden="true" /></span>
+                      <strong>{formatCount(engagement.comments.length)}</strong>
+                    </button>
+                    <button type="button" onClick={() => shareFromStoryFeed(story)} aria-label="Share story">
+                      <span><img src="/icons/story-share.svg" alt="" aria-hidden="true" /></span>
+                      <strong>{formatCount(engagement.shares)}</strong>
+                    </button>
+                  </div>
+
+                  {storyLikeBurst?.storyId === story.id && (
+                    <div className="story-like-burst" key={storyLikeBurst.key} aria-hidden="true">♥</div>
+                  )}
+
                   <div className="tiktok-story-copy">
                     <span>{story.source} · {relativeTime(story.publishedAt)} ago</span>
                     <h3>{story.title}</h3>
+                    <button type="button" onClick={(event) => openStorySummary(event, story)}>Read more</button>
                   </div>
-                )}
-                {storyMediaType(story) === "image" && (
-                  <button className="tiktok-open-button" type="button" onClick={() => openStory(index)} aria-label="Open image story">Open</button>
-                )}
-              </article>
-            )) : (
+
+                  {commentsOpen && (
+                    <div className="story-comment-panel">
+                      <div className="story-comment-header">
+                        <strong>{engagement.comments.length} comments</strong>
+                        <span aria-hidden="true"></span>
+                        <button type="button" onClick={() => setOpenStoryCommentsId("")} aria-label="Close comments">
+                          <img src="/icons/close-circle.svg" alt="" aria-hidden="true" />
+                        </button>
+                      </div>
+                      <div className="story-nickname-row">
+                        <input
+                          value={storyNicknameDraft}
+                          onChange={(event) => setStoryNicknameDraft(event.target.value)}
+                          placeholder="Nick name"
+                          disabled={!canRename}
+                        />
+                        <button type="button" onClick={saveStoryNickname} disabled={!canRename || !storyNicknameDraft.trim()}>
+                          {storyUser ? "Name" : "Create"}
+                        </button>
+                      </div>
+                      {storyUser && !canRename && (
+                        <small>One name per device. You can change after {new Date(storyUser.renameAvailableAt).toLocaleDateString()}.</small>
+                      )}
+                      <div className="story-comment-list">
+                        {engagement.comments.length ? engagement.comments.map((comment) => (
+                          <p key={comment.id}>
+                            <b>{comment.nickname}</b>
+                            {comment.text}
+                          </p>
+                        )) : <p className="story-comment-empty">No comments yet.</p>}
+                      </div>
+                      <form
+                        className="story-comment-form"
+                        onSubmit={(event) => {
+                          event.preventDefault();
+                          postStoryComment(story);
+                        }}
+                      >
+                        <input
+                          value={storyCommentDrafts[story.id] ?? ""}
+                          onChange={(event) => setStoryCommentDrafts((items) => ({ ...items, [story.id]: event.target.value }))}
+                          placeholder={storyUser ? "Add comment" : "Add comment after nick name"}
+                        />
+                        <button type="submit" disabled={!cleanComment(storyCommentDrafts[story.id] ?? "") || (!storyUser && !cleanNickname(storyNicknameDraft))}>Post</button>
+                      </form>
+                    </div>
+                  )}
+                </article>
+              );
+            }) : (
               <div className="stories-empty-state">
-                <span>{loading ? "Loading" : "Stories"}</span>
-                <h2>{loading ? "Loading stories..." : "No stories right now"}</h2>
-                <p>{loading ? "Checking recent posts and videos." : "New image and video stories will appear here when they are available."}</p>
+                <span>{loading ? "Loading" : storyFeedMode === "video" ? "Videos" : "Stories"}</span>
+                <h2>{loading ? "Loading stories..." : storyFeedMode === "video" ? "Videos coming soon" : "No stories right now"}</h2>
+                <p>{loading ? "Checking recent posts and videos." : storyFeedMode === "video" ? "Backdoor video and image stories will appear here when published." : "New news stories will appear here when they are available."}</p>
               </div>
             )}
           </div>
@@ -1919,7 +2214,9 @@ export default function Home() {
       {selectedStory && (
         <div className="modal-backdrop" role="dialog" aria-modal="true">
           <article className="read-modal">
-            <button className="close-button" type="button" onClick={() => setSelectedStory(null)} aria-label="Close">×</button>
+            <button className="close-button" type="button" onClick={() => setSelectedStory(null)} aria-label="Close">
+              <img src="/icons/close-circle.svg" alt="" aria-hidden="true" />
+            </button>
             <div className={`modal-image ${toneClass[selectedStory.tone] ?? "tone-city"}`}>
               <NewsImage src={selectedStory.image} />
             </div>
@@ -1994,7 +2291,9 @@ export default function Home() {
 
       {activeStory && (
         <div className="story-viewer" role="dialog" aria-modal="true">
-          <button className="viewer-close" type="button" onClick={() => setStoryIndex(null)} aria-label="Close">×</button>
+          <button className="viewer-close" type="button" onClick={() => setStoryIndex(null)} aria-label="Close">
+            <img src="/icons/close-circle.svg" alt="" aria-hidden="true" />
+          </button>
           <div className="progress-strip">
             {webStories.map((story, index) => (
               <span key={story.id} className={index <= (storyIndex ?? 0) ? "filled" : ""} />
