@@ -1,6 +1,6 @@
 "use client";
 
-import { FormEvent, MouseEvent, useEffect, useMemo, useRef, useState } from "react";
+import { ChangeEvent, FormEvent, MouseEvent, useEffect, useMemo, useRef, useState } from "react";
 
 type Story = {
   id: string;
@@ -527,6 +527,16 @@ function youtubeEmbedUrl(value?: string, muted = true) {
   }
 }
 
+function directVideoUrl(value?: string) {
+  if (!value) return "";
+  try {
+    const url = new URL(value.trim());
+    return /\.(mp4|webm|mov|m4v|ogv)(\?.*)?$/i.test(url.pathname) ? url.toString() : "";
+  } catch {
+    return "";
+  }
+}
+
 function isHttpUrl(value: string) {
   if (!value.trim()) return true;
   try {
@@ -566,6 +576,7 @@ export default function Home() {
   const [editingManualId, setEditingManualId] = useState("");
   const [adminSaveStatus, setAdminSaveStatus] = useState<"idle" | "saving" | "published" | "error">("idle");
   const [adminValidation, setAdminValidation] = useState("");
+  const [adminUploadStatus, setAdminUploadStatus] = useState("");
   const [savedStoryIds, setSavedStoryIds] = useState<string[]>([]);
   const [activeVideoStoryId, setActiveVideoStoryId] = useState("");
   const [pausedVideoStoryIds, setPausedVideoStoryIds] = useState<Set<string>>(new Set());
@@ -1020,8 +1031,8 @@ export default function Home() {
       setAdminValidation("Use a valid http or https link.");
       return;
     }
-    if (manualDraft.mediaType === "video" && !youtubeEmbedUrl(manualDraft.videoUrl || manualDraft.url)) {
-      setAdminValidation("Add a valid YouTube link or video ID.");
+    if (manualDraft.mediaType === "video" && !youtubeEmbedUrl(manualDraft.videoUrl || manualDraft.url) && !directVideoUrl(manualDraft.videoUrl || manualDraft.url)) {
+      setAdminValidation("Add a valid YouTube link, video ID, or uploaded video file.");
       return;
     }
     setAdminValidation("");
@@ -1067,6 +1078,35 @@ export default function Home() {
       mediaType: storyMediaType(story),
       placement: story.placement ?? "both"
     });
+  }
+
+  async function uploadManualMedia(event: ChangeEvent<HTMLInputElement>, kind: "image" | "video") {
+    const file = event.target.files?.[0];
+    if (!file) return;
+    setAdminUploadStatus(`Uploading ${kind}...`);
+    setAdminValidation("");
+
+    try {
+      const formData = new FormData();
+      formData.append("file", file);
+      formData.append("kind", kind);
+      const response = await fetch("/api/upload", {
+        method: "POST",
+        body: formData
+      });
+      const data = await response.json();
+      if (!response.ok || !data.url) throw new Error(data.error || "Upload failed");
+      setManualDraft((draft) => ({
+        ...draft,
+        ...(kind === "video" ? { videoUrl: data.url, url: draft.url || data.url, mediaType: "video" as const } : { image: data.url })
+      }));
+      setAdminUploadStatus(`${kind === "video" ? "Video" : "Image"} uploaded`);
+    } catch (error) {
+      setAdminUploadStatus("");
+      setAdminValidation(error instanceof Error ? error.message : "Upload failed. Check Supabase Storage setup.");
+    } finally {
+      event.target.value = "";
+    }
   }
 
   function toggleSavedStory(story: Story) {
@@ -1745,6 +1785,7 @@ export default function Home() {
               <label>
                 Image URL
                 <input value={manualDraft.image} onChange={(event) => setManualDraft((draft) => ({ ...draft, image: event.target.value }))} placeholder="https://..." />
+                <input type="file" accept="image/*" onChange={(event) => uploadManualMedia(event, "image")} />
               </label>
               <label>
                 Link URL
@@ -1778,14 +1819,16 @@ export default function Home() {
               </label>
               {manualDraft.mediaType === "video" && (
                 <label>
-                  Video link
-                  <input value={manualDraft.videoUrl} onChange={(event) => setManualDraft((draft) => ({ ...draft, videoUrl: event.target.value }))} placeholder="YouTube link or video ID" />
+                  Video link or upload
+                  <input value={manualDraft.videoUrl} onChange={(event) => setManualDraft((draft) => ({ ...draft, videoUrl: event.target.value }))} placeholder="YouTube, mp4/webm/mov link, or uploaded video" />
+                  <input type="file" accept="video/mp4,video/webm,video/quicktime,video/*" onChange={(event) => uploadManualMedia(event, "video")} />
                 </label>
               )}
+              {adminUploadStatus ? <p className="admin-upload-status">{adminUploadStatus}</p> : null}
               <section className={`admin-preview preview-${manualDraft.mediaType}`}>
                 <div className="admin-preview-media">
                   {manualDraft.mediaType === "video" ? (
-                    youtubeEmbedUrl(manualDraft.videoUrl || manualDraft.url) ? <span>Video link ready</span> : <span>Add a YouTube link</span>
+                    youtubeEmbedUrl(manualDraft.videoUrl || manualDraft.url) || directVideoUrl(manualDraft.videoUrl || manualDraft.url) ? <span>Video ready</span> : <span>Add or upload a video</span>
                   ) : (
                     <NewsImage src={manualDraft.image} />
                   )}
@@ -1860,6 +1903,9 @@ export default function Home() {
               const engagement = engagementFor(story);
               const commentsOpen = openStoryCommentsId === story.id;
               const canRename = !storyUser || Date.now() >= new Date(storyUser.renameAvailableAt).getTime();
+              const storyVideoUrl = story.videoUrl || story.url;
+              const storyYoutubeUrl = youtubeEmbedUrl(storyVideoUrl, !soundVideoStoryIds.has(story.id));
+              const storyDirectVideoUrl = directVideoUrl(storyVideoUrl);
               return (
                 <article
                   className={`tiktok-story-card story-kind-${storyMediaType(story)}`}
@@ -1867,15 +1913,27 @@ export default function Home() {
                   data-story-video-id={storyMediaType(story) === "video" ? story.id : undefined}
                   onClick={(event) => handleStoryCardTap(event, story)}
                 >
-                  {storyMediaType(story) === "video" && youtubeEmbedUrl(story.videoUrl || story.url) ? (
+                  {storyMediaType(story) === "video" && (storyYoutubeUrl || storyDirectVideoUrl) ? (
                     <>
                       {activeVideoStoryId === story.id && !pausedVideoStoryIds.has(story.id) ? (
-                        <iframe
-                          src={youtubeEmbedUrl(story.videoUrl || story.url, !soundVideoStoryIds.has(story.id))}
-                          title={story.title}
-                          allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share"
-                          allowFullScreen
-                        />
+                        storyYoutubeUrl ? (
+                          <iframe
+                            src={storyYoutubeUrl}
+                            title={story.title}
+                            allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share"
+                            allowFullScreen
+                          />
+                        ) : (
+                          <video
+                            className="story-direct-video"
+                            src={storyDirectVideoUrl}
+                            autoPlay
+                            loop
+                            muted={!soundVideoStoryIds.has(story.id)}
+                            playsInline
+                            controls={soundVideoStoryIds.has(story.id)}
+                          />
+                        )
                       ) : (
                         <div className={`story-media ${toneClass[story.tone] ?? "tone-city"}`}>
                           <NewsImage src={story.image} />

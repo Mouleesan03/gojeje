@@ -1784,6 +1784,7 @@ h3 {
 }
 
 .tiktok-story-card iframe,
+.story-direct-video,
 .tiktok-media-button,
 .tiktok-story-card .story-media {
   position: absolute;
@@ -1791,6 +1792,11 @@ h3 {
   width: 100%;
   height: 100%;
   border: 0;
+}
+
+.story-direct-video {
+  object-fit: cover;
+  background: #000;
 }
 
 .tiktok-media-button {
@@ -1803,6 +1809,13 @@ h3 {
   width: 100%;
   height: 100%;
   object-fit: cover;
+  image-rendering: auto;
+  transform: translateZ(0);
+}
+
+.tiktok-story-card.story-kind-news .story-media > img {
+  object-fit: cover;
+  filter: saturate(1.02) contrast(1.02);
 }
 
 .tiktok-story-card.story-kind-image .story-media > img {
@@ -1821,6 +1834,10 @@ h3 {
   width: 100%;
   height: 100%;
   background: #000;
+  pointer-events: none;
+}
+
+.tiktok-story-card.story-kind-video .story-direct-video {
   pointer-events: none;
 }
 
@@ -1887,22 +1904,22 @@ h3 {
 .story-swipe-hint {
   position: absolute;
   left: 50%;
-  top: 14px;
+  top: 50%;
   z-index: 8;
   display: inline-flex;
   align-items: center;
   gap: 6px;
-  transform: translateX(-50%);
+  transform: translate(-50%, -50%);
   border-radius: 999px;
   background: rgba(0, 0, 0, 0.42);
   color: #fff;
-  padding: 8px 12px;
-  font-size: 12px;
+  padding: 11px 15px;
+  font-size: 13px;
   font-weight: 800;
   pointer-events: none;
   opacity: 0;
   backdrop-filter: blur(14px);
-  animation: storyHint 3.8s ease 0.6s 2;
+  animation: storyHint 3.8s ease 0.7s 1;
 }
 
 .story-swipe-hint span {
@@ -1924,7 +1941,7 @@ h3 {
 .tiktok-story-copy {
   position: absolute;
   left: 18px;
-  right: 92px;
+  right: 70px;
   bottom: 22px;
   z-index: 2;
   text-shadow: 0 2px 18px rgba(0, 0, 0, 0.42);
@@ -1973,11 +1990,11 @@ h3 {
 
 .tiktok-action-rail {
   position: absolute;
-  right: 16px;
-  bottom: 112px;
+  right: 10px;
+  bottom: 118px;
   z-index: 4;
   display: grid;
-  gap: 19px;
+  gap: 16px;
   justify-items: center;
   color: #fff;
 }
@@ -1985,39 +2002,46 @@ h3 {
 .tiktok-action-rail button {
   display: grid;
   justify-items: center;
-  gap: 5px;
-  min-width: 48px;
+  gap: 4px;
+  width: 44px;
+  min-width: 44px;
   border: 0;
   background: transparent;
   color: inherit;
   text-shadow: 0 2px 12px rgba(0, 0, 0, 0.7);
 }
 
+.tiktok-action-rail button:focus,
+.tiktok-action-rail button:focus-visible {
+  outline: 0;
+  box-shadow: none;
+}
+
 .tiktok-action-rail button > span {
   display: grid;
   place-items: center;
-  width: 48px;
-  height: 48px;
+  width: 40px;
+  height: 40px;
   border-radius: 50%;
   color: #fff;
-  font-size: 26px;
+  font-size: 28px;
   font-weight: 900;
   line-height: 1;
   filter: drop-shadow(0 4px 12px rgba(0, 0, 0, 0.42));
 }
 
 .tiktok-action-rail button span img {
-  width: 34px;
-  height: 34px;
+  width: 30px;
+  height: 30px;
   object-fit: contain;
   filter: invert(1) drop-shadow(0 4px 10px rgba(0, 0, 0, 0.45));
 }
 
 .tiktok-action-rail button strong {
-  max-width: 58px;
+  max-width: 48px;
   overflow: hidden;
   color: #fff;
-  font-size: 12px;
+  font-size: 11px;
   font-weight: 800;
   line-height: 1;
   text-overflow: ellipsis;
@@ -3514,6 +3538,16 @@ h3 {
   font-weight: 800;
 }
 
+.admin-upload-status {
+  margin: -2px 0 0;
+  border-radius: 8px;
+  background: #eef6ff;
+  color: #165b91;
+  padding: 9px 10px;
+  font-size: 12px;
+  font-weight: 800;
+}
+
 .admin-save-status.status-saving {
   background: #f5f5f5;
   color: #555;
@@ -3910,11 +3944,11 @@ h3 {
 @keyframes storyHint {
   0%, 100% {
     opacity: 0;
-    transform: translate(-50%, 8px);
+    transform: translate(-50%, calc(-50% + 12px));
   }
   18%, 76% {
     opacity: 1;
-    transform: translate(-50%, 0);
+    transform: translate(-50%, -50%);
   }
 }
 
@@ -4022,7 +4056,7 @@ h3 {
   }
 
   .site-shell.stories-active .tiktok-story-copy {
-    right: 88px;
+    right: 66px;
     bottom: calc(66px + env(safe-area-inset-bottom));
   }
 
@@ -4040,24 +4074,24 @@ h3 {
   }
 
   .site-shell.stories-active .story-swipe-hint {
-    top: calc(48px + env(safe-area-inset-top));
+    top: 50%;
   }
 
   .site-shell.stories-active .tiktok-action-rail {
-    right: 11px;
+    right: 7px;
     bottom: calc(108px + env(safe-area-inset-bottom));
     gap: 14px;
   }
 
   .site-shell.stories-active .tiktok-action-rail button > span {
-    width: 43px;
-    height: 43px;
-    font-size: 24px;
+    width: 40px;
+    height: 40px;
+    font-size: 28px;
   }
 
   .site-shell.stories-active .tiktok-action-rail button span img {
-    width: 31px;
-    height: 31px;
+    width: 30px;
+    height: 30px;
   }
 
   .site-shell.stories-active .tiktok-story-copy h3 {
